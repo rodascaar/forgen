@@ -102,7 +102,7 @@ func (a *Anthropic) StreamChat(ctx context.Context, request ports.ChatRequest, h
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 
 	accumulator := newAnthropicAccumulator(handler, slog.Default())
 	if err := a.client.StreamSSE(response.Body, func(data string) error {
@@ -258,7 +258,9 @@ func (a *anthropicAccumulator) process(event anthropicSSEEvent) error {
 		}
 	case "message_start":
 		if event.Usage != nil {
-			a.handler(ports.UsageEvent{Usage: domain.Usage{InputTokens: event.Usage.InputTokens}})
+			if err := a.handler(ports.UsageEvent{Usage: domain.Usage{InputTokens: event.Usage.InputTokens}}); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

@@ -68,7 +68,7 @@ func (b *BraveSearch) Search(ctx context.Context, query string, limit int) ([]po
 	if err != nil {
 		return nil, fmt.Errorf("brave search: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("brave search http %d", response.StatusCode)

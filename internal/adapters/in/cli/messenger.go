@@ -32,7 +32,7 @@ func (m *textMessenger) StreamText(_ string, delta string) {
 		m.emit(streamTextEvent{Type: "stream_text", Text: delta})
 		return
 	}
-	fmt.Fprint(m.out, delta)
+	_, _ = fmt.Fprint(m.out, delta)
 }
 
 // ToolStarted implementa ports.Messenger.
@@ -41,7 +41,7 @@ func (m *textMessenger) ToolStarted(_ string, call domain.ToolCall) {
 		m.emit(toolStartedEvent{Type: "tool_started", Tool: call.Name, Arguments: call.Arguments})
 		return
 	}
-	fmt.Fprintf(m.out, "\n\x1b[36m▶ %s\x1b[0m\n", toolCallSummary(call))
+	_, _ = fmt.Fprintf(m.out, "\n\x1b[36m▶ %s\x1b[0m\n", toolCallSummary(call))
 }
 
 // ToolFinished implementa ports.Messenger.
@@ -51,9 +51,9 @@ func (m *textMessenger) ToolFinished(_ string, call domain.ToolCall, result doma
 		return
 	}
 	if result.OK {
-		fmt.Fprintf(m.out, "\x1b[32m✓ %s\x1b[0m\n", summarize(result.Output))
+		_, _ = fmt.Fprintf(m.out, "\x1b[32m✓ %s\x1b[0m\n", summarize(result.Output))
 	} else {
-		fmt.Fprintf(m.out, "\x1b[31m✗ %s: %v\x1b[0m\n", call.Name, result.Error)
+		_, _ = fmt.Fprintf(m.out, "\x1b[31m✗ %s: %v\x1b[0m\n", call.Name, result.Error)
 	}
 }
 
@@ -63,7 +63,7 @@ func (m *textMessenger) Notice(_ string, text string) {
 		m.emit(noticeEvent{Type: "notice", Text: text})
 		return
 	}
-	fmt.Fprintf(m.out, "\n\x1b[33m⚠ %s\x1b[0m\n", text)
+	_, _ = fmt.Fprintf(m.out, "\n\x1b[33m⚠ %s\x1b[0m\n", text)
 }
 
 // Error implementa ports.Messenger.
@@ -72,7 +72,7 @@ func (m *textMessenger) Error(_ string, err error) {
 		m.emit(errorEvent{Type: "error", Error: err.Error()})
 		return
 	}
-	fmt.Fprintf(m.out, "\n\x1b[31mError: %v\x1b[0m\n", err)
+	_, _ = fmt.Fprintf(m.out, "\n\x1b[31mError: %v\x1b[0m\n", err)
 }
 
 // Finished implementa ports.Messenger.
@@ -86,8 +86,8 @@ func (m *textMessenger) Finished(_ string, finalText string) {
 // Confirm implementa ports.PermissionResponder (prompt Y/N en terminal).
 func (m *textMessenger) Confirm(_ context.Context, _ string, call domain.ToolCall) (bool, error) {
 	if !m.json {
-		fmt.Fprintf(m.out, "\n\x1b[33mPermiso para: %s\x1b[0m\n", toolCallSummary(call))
-		fmt.Fprint(m.out, "¿Permitir? [y/N] ")
+		_, _ = fmt.Fprintf(m.out, "\n\x1b[33mPermiso para: %s\x1b[0m\n", toolCallSummary(call))
+		_, _ = fmt.Fprint(m.out, "¿Permitir? [y/N] ")
 	}
 	scanner := bufio.NewScanner(m.in)
 	if !scanner.Scan() {
@@ -143,7 +143,7 @@ func (m *textMessenger) emit(event any) {
 	if err != nil {
 		return
 	}
-	fmt.Fprintln(m.out, string(data))
+	_, _ = fmt.Fprintln(m.out, string(data))
 }
 
 func toolCallSummary(call domain.ToolCall) string {

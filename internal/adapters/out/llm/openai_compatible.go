@@ -106,7 +106,7 @@ func (o *OpenAICompatible) StreamChat(ctx context.Context, request ports.ChatReq
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 
 	accumulator := newOpenAIToolAccumulator(request.Model, handler)
 
@@ -260,10 +260,12 @@ func (a *openAIToolAccumulator) process(chunk openAIChunk) error {
 		}
 	}
 	if chunk.Usage != nil {
-		a.handler(ports.UsageEvent{Usage: domain.Usage{
+		if err := a.handler(ports.UsageEvent{Usage: domain.Usage{
 			InputTokens:  chunk.Usage.PromptTokens,
 			OutputTokens: chunk.Usage.CompletionTokens,
-		}})
+		}}); err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -44,7 +44,7 @@ func newSessionsCommand(app *apppkg.App) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			os.Stdout.Write(data)
+			_, _ = os.Stdout.Write(data)
 			return nil
 		},
 	})

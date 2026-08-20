@@ -87,8 +87,8 @@ func (c *Client) Do(ctx context.Context, method, path string, jsonBody func() ([
 
 		if shouldRetry(response.StatusCode) {
 			lastErr = fmt.Errorf("http %d", response.StatusCode)
-			io.Copy(io.Discard, response.Body)
-			response.Body.Close()
+			_, _ = io.Copy(io.Discard, response.Body)
+			_ = response.Body.Close()
 			if c.Logger != nil {
 				c.Logger.Warn("llm.request.retry", "attempt", attempt, "status", response.StatusCode)
 			}
@@ -100,7 +100,7 @@ func (c *Client) Do(ctx context.Context, method, path string, jsonBody func() ([
 
 		if response.StatusCode >= 400 {
 			bodyText, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-			response.Body.Close()
+			_ = response.Body.Close()
 			return nil, fmt.Errorf("llm http %d: %s", response.StatusCode, strings.TrimSpace(string(bodyText)))
 		}
 

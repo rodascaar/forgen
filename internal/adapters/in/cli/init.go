@@ -30,13 +30,13 @@ func runInit(ctx context.Context, app *apppkg.App, in io.Reader, out io.Writer) 
 		return err
 	}
 
-	fmt.Fprintln(out, "Bienvenido a forgen.")
-	fmt.Fprintf(out, "Config existente en: %s\n", app.Paths.ConfigFile)
+	_, _ = fmt.Fprintln(out, "Bienvenido a forgen.")
+	_, _ = fmt.Fprintf(out, "Config existente en: %s\n", app.Paths.ConfigFile)
 
 	if len(config.Providers) > 0 {
-		fmt.Fprintln(out, "\nProveedores configurados:")
+		_, _ = fmt.Fprintln(out, "\nProveedores configurados:")
 		for _, provider := range config.Providers {
-			fmt.Fprintf(out, "  - %s (%s) modelos: %s\n", provider.Name, provider.Type, strings.Join(provider.Models, ", "))
+			_, _ = fmt.Fprintf(out, "  - %s (%s) modelos: %s\n", provider.Name, provider.Type, strings.Join(provider.Models, ", "))
 		}
 		answer := ask(reader, out, "\n¿Añadir un nuevo proveedor? [y/N] ")
 		if !strings.EqualFold(answer, "y") {
@@ -50,7 +50,7 @@ func runInit(ctx context.Context, app *apppkg.App, in io.Reader, out io.Writer) 
 	}
 	config.Providers = append(config.Providers, provider)
 
-	fmt.Fprintf(out, "\nModelo por defecto de %s: ", provider.Name)
+	_, _ = fmt.Fprintf(out, "\nModelo por defecto de %s: ", provider.Name)
 	model := strings.TrimSpace(readLine(reader))
 	if model == "" && len(provider.Models) > 0 {
 		model = provider.Models[0]
@@ -71,13 +71,13 @@ func runInit(ctx context.Context, app *apppkg.App, in io.Reader, out io.Writer) 
 }
 
 func promptProvider(reader *bufio.Reader, out io.Writer) (domain.ProviderConfig, error) {
-	fmt.Fprintln(out, "\nNuevo proveedor LLM.")
+	_, _ = fmt.Fprintln(out, "\nNuevo proveedor LLM.")
 	name := ask(reader, out, "Nombre (ej: openai, anthropic, local): ")
 	if name == "" {
 		name = "openai"
 	}
 
-	fmt.Fprintln(out, "Tipos soportados: openai_compatible | anthropic | kimchi")
+	_, _ = fmt.Fprintln(out, "Tipos soportados: openai_compatible | anthropic | kimchi")
 	providerType := ask(reader, out, "Tipo [openai_compatible]: ")
 	if providerType == "" {
 		providerType = "openai_compatible"
@@ -136,7 +136,7 @@ func splitModels(raw string) []string {
 }
 
 func ask(reader *bufio.Reader, out io.Writer, question string) string {
-	fmt.Fprint(out, question)
+	_, _ = fmt.Fprint(out, question)
 	return strings.TrimSpace(readLine(reader))
 }
 

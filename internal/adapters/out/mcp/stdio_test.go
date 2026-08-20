@@ -131,7 +131,7 @@ func TestMCPToolErrorPropagates(t *testing.T) {
 	if err := client.initialize(); err != nil {
 		t.Fatalf("initialize: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

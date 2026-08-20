@@ -35,7 +35,7 @@ func (s *JSONLUsageStore) Append(_ context.Context, record domain.UsageRecord) e
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	if _, err := file.Write(append(data, '\n')); err != nil {
 		return err
 	}
@@ -51,7 +51,7 @@ func (s *JSONLUsageStore) List(_ context.Context, limit int) ([]domain.UsageReco
 		}
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	var records []domain.UsageRecord
 	scanner := bufio.NewScanner(file)

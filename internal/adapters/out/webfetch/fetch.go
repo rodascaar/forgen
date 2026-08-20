@@ -37,7 +37,7 @@ func Fetch(ctx context.Context, rawURL string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("fetch %s: %w", rawURL, err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 
 	if response.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("fetch %s: http %d", rawURL, response.StatusCode)

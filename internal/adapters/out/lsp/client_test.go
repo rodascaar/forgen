@@ -97,7 +97,7 @@ func (s *fakeLSPServer) writeResponse(id int64, result any) {
 	defer s.mu.Unlock()
 	payload := map[string]any{"jsonrpc": "2.0", "id": id, "result": result}
 	data, _ := json.Marshal(payload)
-	fmt.Fprintf(s.writer, "Content-Length: %d\r\n\r\n%s", len(data), data)
+	_, _ = fmt.Fprintf(s.writer, "Content-Length: %d\r\n\r\n%s", len(data), data)
 	_ = s.writer.Flush()
 }
 

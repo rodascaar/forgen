@@ -100,7 +100,7 @@ func (s *JSONLFermentStore) AppendEvent(_ context.Context, event ports.FermentEv
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	if _, err := file.Write(append(data, '\n')); err != nil {
 		return err
 	}
@@ -113,7 +113,7 @@ func (s *JSONLFermentStore) lastHash(id string) string {
 	if err != nil {
 		return ""
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)

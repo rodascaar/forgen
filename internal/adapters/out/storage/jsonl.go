@@ -88,7 +88,7 @@ func (s *JSONLStore) create(session domain.Session, path string) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	if err := writeMeta(file, session); err != nil {
 		return err
 	}
@@ -180,7 +180,7 @@ func (s *JSONLStore) Load(_ context.Context, id string) (domain.Session, error) 
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("abrir sesión %s: %w", id, err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
@@ -282,7 +282,7 @@ func (s *JSONLStore) readMeta(id string) (sessionMeta, error) {
 	if err != nil {
 		return sessionMeta{}, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 	if !scanner.Scan() {
