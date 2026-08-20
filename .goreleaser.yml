@@ -1,0 +1,78 @@
+# GoReleaser configuration
+# Documentación: https://goreleaser.com
+
+version: 2
+
+project_name: forgen
+
+before:
+  hooks:
+    - go mod tidy
+    - gofmt -l .
+
+builds:
+  - id: forgen
+    main: ./cmd/forgen
+    binary: forgen
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X github.com/forgen/forgen/internal/app.Version={{ .Version }}
+      - -X github.com/forgen/forgen/internal/app.Commit={{ .ShortCommit }}
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Os }}_{{ .Arch }}
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - Merge pull request
+      - Merge branch
+
+brews:
+  - name: forgen
+    repository:
+      owner: forgen
+      name: homebrew-tap
+    commit_author:
+      name: forgen
+      email: noreply@forgen.dev
+    homepage: https://github.com/forgen/forgen
+    description: "Agente de código agnóstico a lenguaje y proveedor LLM"
+    license: Apache-2.0
+
+nfpms:
+  - id: forgen
+    package_name: forgen
+    file_name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Arch }}"
+    vendor: forgen
+    homepage: https://github.com/forgen/forgen
+    maintainer: forgen <noreply@forgen.dev>
+    description: "Agente de código agnóstico a lenguaje y proveedor LLM"
+    license: Apache-2.0
+    formats:
+      - deb
+      - rpm

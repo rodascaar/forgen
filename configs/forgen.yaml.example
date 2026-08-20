@@ -1,0 +1,72 @@
+# Configuración de ejemplo de forgen.
+# Copiar a ~/.config/forgen/config.yaml y ajustar.
+
+# Proveedores LLM (sin lock-in: el usuario elige).
+providers:
+  - name: openai
+    type: openai_compatible
+    base_url: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
+    models: [gpt-5, gpt-5-mini]
+  - name: anthropic
+    type: anthropic
+    base_url: https://api.anthropic.com
+    api_key_env: ANTHROPIC_API_KEY
+    models: [claude-sonnet-4-5]
+  - name: local
+    type: openai_compatible
+    base_url: http://localhost:11434/v1
+    api_key_env: ""
+    models: [llama3]
+
+# Proveedor y modelo por defecto.
+default:
+  provider: openai
+  model: gpt-5
+
+# Permisos: auto | on_request | never.
+permissions:
+  mode: auto
+
+# Agente por defecto: build | plan.
+agent: build
+
+# Límites del loop.
+max_iterations: 50
+max_output_chars: 30000
+
+# Orquestación multi-modelo por roles (opcional).
+model_roles:
+  explorer: [openai/gpt-5-mini]
+  builder: [openai/gpt-5, anthropic/claude-sonnet-4-5]
+  reviewer: [anthropic/claude-sonnet-4-5]
+model_metadata:
+  anthropic/claude-sonnet-4-5: { tier: heavy }
+  openai/gpt-5-mini: { tier: light }
+
+# Servidores MCP (opcional).
+mcp_servers:
+  filesystem:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/ruta/a/un/dir"]
+
+# Búsqueda web (opcional).
+search:
+  provider: brave
+  api_key_env: BRAVE_API_KEY
+
+# Paleta de la TUI (opcional).
+theme:
+  user: "#7aa2f7"
+  assistant: "#c0caf5"
+  tool: "#2ac3de"
+  tool_done: "#9ece6a"
+  notice: "#e0af68"
+  error: "#f7768e"
+  accent: "#bb9af7"
+  dim: "#565f89"
+
+# Ejecución de comandos (opcional: docker para sandbox).
+execution:
+  sandbox: ""           # "" | docker
+  docker_image: "forgen-sandbox"

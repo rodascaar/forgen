@@ -1,0 +1,27 @@
+# .gitignore
+# Binarios y artefactos de build
+/forgen
+/dist/
+/bin/
+*.exe
+*.test
+*.out
+
+# Go
+vendor/
+coverage.out
+coverage.html
+*.prof
+
+# Config local del usuario (nunca versionar keys)
+.forgen/
+*.local.yaml
+
+# Editor/OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Sesiones y datos locales
+sessions/
