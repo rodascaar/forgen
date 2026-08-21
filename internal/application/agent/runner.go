@@ -309,8 +309,9 @@ func (r *Runner) executeWithPermission(ctx context.Context, sessionID string, ca
 func (r *Runner) visibleTools(agent domain.Agent) []domain.Tool {
 	if agent.IsReadOnly {
 		// El agente de solo lectura no ve herramientas de escritura/ejecución.
-		readOnly := make([]domain.Tool, 0)
-		for _, tool := range r.tools.ListTools() {
+		available := r.tools.ListTools()
+		readOnly := make([]domain.Tool, 0, len(available))
+		for _, tool := range available {
 			switch tool.Name {
 			case "write", "edit", "bash":
 				continue

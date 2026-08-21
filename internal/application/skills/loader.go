@@ -71,7 +71,6 @@ func ParseSkill(content, path string) Skill {
 				continue
 			}
 			if inFrontmatter && trimmed == "---" {
-				inFrontmatter = false
 				closed = true
 				bodyStart = index + 1
 				break

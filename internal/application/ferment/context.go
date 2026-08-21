@@ -24,7 +24,7 @@ func ContextBlock(ferment domain.Ferment) string {
 	if ferment.Constraints != "" {
 		fmt.Fprintf(&builder, "Restricciones: %s\n", ferment.Constraints)
 	}
-	builder.WriteString(fmt.Sprintf("Estado: %s\n", ferment.Status))
+	fmt.Fprintf(&builder, "Estado: %s\n", ferment.Status)
 
 	// Fases y pasos (progreso).
 	for phaseIndex, phase := range ferment.Phases {

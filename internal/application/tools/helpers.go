@@ -33,10 +33,6 @@ func boolProp(description string) map[string]any {
 	return map[string]any{"type": "boolean", "description": description}
 }
 
-func enumProp(description string, values ...string) map[string]any {
-	return map[string]any{"type": "string", "description": description, "enum": values}
-}
-
 // decodeArgs convierte los argumentos tipados del modelo a un struct destino.
 func decodeArgs[ArgType any](raw map[string]any) (ArgType, error) {
 	var args ArgType

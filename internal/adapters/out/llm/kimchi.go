@@ -8,9 +8,6 @@ import (
 	"github.com/forgen/forgen/internal/core/ports"
 )
 
-// kimchiPhaseHeader envía la fase actual del agente al gateway (atribución de costos).
-const kimchiPhaseHeader = "x-kimchi-phase"
-
 // Kimchi es el adapter del gateway gestionado de Kimchi.
 // Usa el protocolo OpenAI-compatible y añade metadatos de fase y etiquetas.
 type Kimchi struct {

@@ -142,9 +142,10 @@ func runFermentProgress(ctx context.Context, app *apppkg.App, id string) error {
 		fmt.Printf("\nFase %d: %s [%s]\n", phaseIndex+1, phase.Name, phase.Status)
 		for stepIndex, step := range phase.Steps {
 			marker := "  "
-			if step.Status == domain.StepStatusCompleted {
+			switch step.Status {
+			case domain.StepStatusCompleted:
 				marker = "x "
-			} else if step.Status == domain.StepStatusActive {
+			case domain.StepStatusActive:
 				marker = "> "
 			}
 			fmt.Printf("  %s%d.%d %s\n", marker, phaseIndex+1, stepIndex+1, step.Task)

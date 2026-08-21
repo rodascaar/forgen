@@ -96,7 +96,7 @@ type runDoneMsg struct {
 }
 
 func toolCallLabel(call domain.ToolCall) string {
-	var args []string
+	args := make([]string, 0, len(call.Arguments))
 	for key, value := range call.Arguments {
 		args = append(args, fmt.Sprintf("%s=%v", key, value))
 	}

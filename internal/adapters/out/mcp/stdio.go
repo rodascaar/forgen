@@ -45,7 +45,6 @@ type jsonrpcError struct {
 
 // stdioClient implementa ports.MCPClient sobre un subproceso stdio.
 type stdioClient struct {
-	cmd       *exec.Cmd
 	stdin     io.WriteCloser
 	writer    *bufio.Writer
 	reader    *bufio.Reader

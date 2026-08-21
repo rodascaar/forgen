@@ -24,7 +24,6 @@ const diagnosticsTimeout = 3 * time.Second
 
 // clientImpl es el transporte JSON-RPC con framing Content-Length.
 type clientImpl struct {
-	cmd       *exec.Cmd
 	writer    *bufio.Writer
 	reader    *bufio.Reader
 	closeFunc func() error
