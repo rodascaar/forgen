@@ -190,7 +190,23 @@ func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch message.String() {
-	case "ctrl+c", "q":
+	case "ctrl+c":
+		if m.running {
+			if m.cancelRun != nil {
+				m.cancelRun()
+			}
+			m.append("notice", "Cancelando petición...")
+			return m, nil
+		}
+		m.quitting = true
+		return m, tea.Quit
+
+	case "q":
+		// 'q' sale solo con el prompt vacío; si hay texto, se deja escribir
+		// la letra 'q' en el campo de entrada.
+		if m.input.Value() != "" {
+			break
+		}
 		if m.running {
 			if m.cancelRun != nil {
 				m.cancelRun()
@@ -215,6 +231,12 @@ func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.input.SetValue("")
 		m.append("user", prompt)
+		// Activar el estado de ejecución AQUÍ: startRun recibe m por valor,
+		// así que cualquier mutación interna se descarta. Sin esto el spinner,
+		// el bloqueo de Enter, el cancelado con Ctrl+C y el bloqueo de Tab
+		// nunca funcionan.
+		m.running = true
+		m.assistantBuffer = ""
 		ctx, cancel := context.WithCancel(context.Background())
 		m.cancelRun = cancel
 		return m, m.startRun(ctx, prompt)
@@ -238,11 +260,9 @@ func (m *Model) toggleAgent() {
 	m.agentName = "build"
 }
 
-// startRun lanza el agente en segundo plano y devuelve el comando del spinner.
+// startRun arma el comando del agente en segundo plano + el ticker del spinner.
+// El estado m.running ya se activó en handleKey (este método recibe m por valor).
 func (m Model) startRun(ctx context.Context, prompt string) tea.Cmd {
-	m.running = true
-	m.assistantBuffer = ""
-
 	runCommand := func() tea.Msg {
 		return runAgent(ctx, m.app, m.sessionID, m.workspace, m.agentName, prompt, m.program)
 	}

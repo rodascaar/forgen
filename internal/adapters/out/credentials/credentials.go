@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -162,7 +163,17 @@ func (s *Store) saveFile(payload filePayload) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.filePath, data, 0o600)
+	if err := os.WriteFile(s.filePath, data, 0o600); err != nil {
+		return err
+	}
+	// Reforzar el permiso 0600 explícitamente: os.WriteFile lo aplica pero
+	// el umask del proceso podría reducirlo. En Windows este es un no-op.
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(s.filePath, 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 var _ ports.CredentialStore = (*Store)(nil)

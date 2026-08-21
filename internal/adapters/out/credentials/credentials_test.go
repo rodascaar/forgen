@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/rodascaar/forgen/internal/adapters/out/credentials"
@@ -31,13 +32,16 @@ func TestFileFallbackStore(t *testing.T) {
 		t.Fatalf("valor inesperado: %q", got)
 	}
 
-	// Permisos del archivo deben ser restrictivos (0600).
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat: %v", err)
-	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
-		t.Fatalf("permisos esperados 0600, got %o", perm)
+	// Permisos del archivo deben ser restrictivos (0600). Los permisos POSIX
+	// no se aplican en Windows, así que solo se comprueban en Unix.
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat: %v", err)
+		}
+		if perm := info.Mode().Perm(); perm != 0o600 {
+			t.Fatalf("permisos esperados 0600, got %o", perm)
+		}
 	}
 
 	if _, err := store.Get(ctx, "providers/noexiste"); err == nil {
