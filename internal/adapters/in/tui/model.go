@@ -64,7 +64,11 @@ type Model struct {
 // Run inicia la TUI en modo pantalla alternativa.
 func Run(app *apppkg.App) error {
 	model := newModel(app)
-	program := tea.NewProgram(model, tea.WithAltScreen())
+	// Se pasa el modelo como puntero para que 'model.program' (seteado tras
+	// NewProgram) sea visible para el modelo del programa. Si se pasa por
+	// valor, el programa mantiene una copia con program == nil y el primer
+	// streaming del agente crashea (nil deref en tuiMessenger.StreamText).
+	program := tea.NewProgram(&model, tea.WithAltScreen())
 	model.program = program
 	_, err := program.Run()
 	return err

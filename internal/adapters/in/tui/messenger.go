@@ -19,40 +19,49 @@ func newTUIMessenger(program *tea.Program) *tuiMessenger {
 	return &tuiMessenger{program: program}
 }
 
+// send es un helper seguro: si el programa es nil (estado inconsistente o run
+// que sobrevivió a la TUI), se ignora el mensaje en vez de paniquear.
+func (m *tuiMessenger) send(msg tea.Msg) {
+	if m.program == nil {
+		return
+	}
+	m.program.Send(msg)
+}
+
 // StreamText implementa ports.Messenger.
 func (m *tuiMessenger) StreamText(_ string, delta string) {
-	m.program.Send(streamDeltaMsg{text: delta})
+	m.send(streamDeltaMsg{text: delta})
 }
 
 // ToolStarted implementa ports.Messenger.
 func (m *tuiMessenger) ToolStarted(_ string, call domain.ToolCall) {
-	m.program.Send(toolStartedMsg{call: call})
+	m.send(toolStartedMsg{call: call})
 }
 
 // ToolFinished implementa ports.Messenger.
 func (m *tuiMessenger) ToolFinished(_ string, call domain.ToolCall, result domain.ToolResult) {
-	m.program.Send(toolFinishedMsg{call: call, result: result})
+	m.send(toolFinishedMsg{call: call, result: result})
 }
 
 // Notice implementa ports.Messenger.
 func (m *tuiMessenger) Notice(_ string, text string) {
-	m.program.Send(noticeMsg{text: text})
+	m.send(noticeMsg{text: text})
 }
 
 // Error implementa ports.Messenger.
 func (m *tuiMessenger) Error(_ string, err error) {
-	m.program.Send(errorMsg{err: err})
+	m.send(errorMsg{err: err})
 }
 
 // Finished implementa ports.Messenger.
 func (m *tuiMessenger) Finished(_ string, finalText string) {
-	m.program.Send(finishedMsg{finalText: finalText})
+	m.send(finishedMsg{finalText: finalText})
 }
 
 // Confirm implementa ports.PermissionResponder (prompt interactivo Y/N).
 func (m *tuiMessenger) Confirm(ctx context.Context, _ string, call domain.ToolCall) (bool, error) {
 	response := make(chan bool, 1)
-	m.program.Send(confirmRequestMsg{call: call, response: response})
+	m.send(confirmRequestMsg{call: call, response: response})
 	select {
 	case allowed := <-response:
 		return allowed, nil

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -140,4 +141,18 @@ func TestHelpContent(t *testing.T) {
 			t.Errorf("la ayuda debería mencionar %q", wanted)
 		}
 	}
+}
+
+// --- Messenger defensivo ---
+
+// TestMessengerNilProgramNoPanic: un messenger con program nil (estado
+// inconsistente o run que sobrevive a la TUI) no debe crashear.
+func TestMessengerNilProgramNoPanic(t *testing.T) {
+	messenger := newTUIMessenger(nil)
+	messenger.StreamText("", "hola")
+	messenger.ToolStarted("", domain.ToolCall{Name: "bash"})
+	messenger.ToolFinished("", domain.ToolCall{Name: "bash"}, domain.ToolResult{OK: true})
+	messenger.Notice("", "aviso")
+	messenger.Error("", errors.New("boom"))
+	messenger.Finished("", "listo")
 }
