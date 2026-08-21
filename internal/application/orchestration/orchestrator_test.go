@@ -4,9 +4,9 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/forgen/forgen/internal/adapters/out/llm"
-	"github.com/forgen/forgen/internal/application/orchestration"
-	"github.com/forgen/forgen/internal/core/domain"
+	"github.com/rodascaar/forgen/internal/adapters/out/llm"
+	"github.com/rodascaar/forgen/internal/application/orchestration"
+	"github.com/rodascaar/forgen/internal/core/domain"
 )
 
 func testConfig() domain.AppConfig {

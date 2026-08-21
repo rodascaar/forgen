@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/forgen/forgen/internal/adapters/out/search"
+	"github.com/rodascaar/forgen/internal/adapters/out/search"
 )
 
 func TestBraveSearchParsesResults(t *testing.T) {

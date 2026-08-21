@@ -6,10 +6,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/forgen/forgen/internal/adapters/in/tui"
-	apppkg "github.com/forgen/forgen/internal/app"
-	"github.com/forgen/forgen/internal/application/agent"
-	"github.com/forgen/forgen/internal/core/domain"
+	"github.com/rodascaar/forgen/internal/adapters/in/tui"
+	apppkg "github.com/rodascaar/forgen/internal/app"
+	"github.com/rodascaar/forgen/internal/application/agent"
+	"github.com/rodascaar/forgen/internal/core/domain"
 	"github.com/spf13/cobra"
 )
 

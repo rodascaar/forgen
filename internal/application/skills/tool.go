@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/forgen/forgen/internal/application/tools"
-	"github.com/forgen/forgen/internal/core/domain"
+	"github.com/rodascaar/forgen/internal/application/tools"
+	"github.com/rodascaar/forgen/internal/core/domain"
 )
 
 // NewReadSkillTool construye la herramienta read_skill que devuelve el cuerpo

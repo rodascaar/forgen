@@ -8,10 +8,10 @@ import (
 	"log/slog"
 	"os/exec"
 
-	lspadapter "github.com/forgen/forgen/internal/adapters/out/lsp"
-	"github.com/forgen/forgen/internal/application/tools"
-	"github.com/forgen/forgen/internal/core/domain"
-	"github.com/forgen/forgen/internal/core/ports"
+	lspadapter "github.com/rodascaar/forgen/internal/adapters/out/lsp"
+	"github.com/rodascaar/forgen/internal/application/tools"
+	"github.com/rodascaar/forgen/internal/core/domain"
+	"github.com/rodascaar/forgen/internal/core/ports"
 )
 
 // languageServer asocia un lenguaje a su servidor y languageId.

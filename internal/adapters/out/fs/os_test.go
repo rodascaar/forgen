@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/forgen/forgen/internal/adapters/out/fs"
+	"github.com/rodascaar/forgen/internal/adapters/out/fs"
 )
 
 func TestReadWriteRoundTrip(t *testing.T) {

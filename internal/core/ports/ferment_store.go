@@ -3,7 +3,7 @@ package ports
 import (
 	"context"
 
-	"github.com/forgen/forgen/internal/core/domain"
+	"github.com/rodascaar/forgen/internal/core/domain"
 )
 
 // FermentEvent es un evento append-only de auditoría del estado.

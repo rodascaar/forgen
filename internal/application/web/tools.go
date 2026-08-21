@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/forgen/forgen/internal/adapters/out/webfetch"
-	"github.com/forgen/forgen/internal/application/tools"
-	"github.com/forgen/forgen/internal/core/domain"
-	"github.com/forgen/forgen/internal/core/ports"
+	"github.com/rodascaar/forgen/internal/adapters/out/webfetch"
+	"github.com/rodascaar/forgen/internal/application/tools"
+	"github.com/rodascaar/forgen/internal/core/domain"
+	"github.com/rodascaar/forgen/internal/core/ports"
 )
 
 // NewWebFetchTool construye la herramienta web_fetch.

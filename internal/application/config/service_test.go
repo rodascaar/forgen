@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/forgen/forgen/internal/application/config"
-	"github.com/forgen/forgen/internal/core/domain"
+	"github.com/rodascaar/forgen/internal/application/config"
+	"github.com/rodascaar/forgen/internal/core/domain"
 )
 
 // fakeConfigStore devuelve una configuración fija.

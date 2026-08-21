@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"sort"
 
-	"github.com/forgen/forgen/internal/core/domain"
-	"github.com/forgen/forgen/internal/core/ports"
+	"github.com/rodascaar/forgen/internal/core/domain"
+	"github.com/rodascaar/forgen/internal/core/ports"
 )
 
 // Service registra y agrega el uso de tokens por modelo.

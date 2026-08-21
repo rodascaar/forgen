@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/forgen/forgen/internal/adapters/out/storage"
-	"github.com/forgen/forgen/internal/core/domain"
+	"github.com/rodascaar/forgen/internal/adapters/out/storage"
+	"github.com/rodascaar/forgen/internal/core/domain"
 )
 
 func TestJSONLRoundTrip(t *testing.T) {

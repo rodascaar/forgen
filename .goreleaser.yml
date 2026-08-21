@@ -18,8 +18,8 @@ builds:
       - CGO_ENABLED=0
     ldflags:
       - -s -w
-      - -X github.com/forgen/forgen/internal/app.Version={{ .Version }}
-      - -X github.com/forgen/forgen/internal/app.Commit={{ .ShortCommit }}
+      - -X github.com/rodascaar/forgen/internal/app.Version={{ .Version }}
+      - -X github.com/rodascaar/forgen/internal/app.Commit={{ .ShortCommit }}
     goos:
       - darwin
       - linux
@@ -42,6 +42,12 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
+# Publicar install.sh como asset del release para que
+# https://github.com/rodascaar/forgen/releases/latest/download/install.sh funcione.
+release:
+  extra_files:
+    - glob: scripts/install.sh
+
 changelog:
   sort: asc
   filters:
@@ -52,25 +58,13 @@ changelog:
       - Merge pull request
       - Merge branch
 
-brews:
-  - name: forgen
-    repository:
-      owner: forgen
-      name: homebrew-tap
-    commit_author:
-      name: forgen
-      email: noreply@forgen.dev
-    homepage: https://github.com/forgen/forgen
-    description: "Agente de código agnóstico a lenguaje y proveedor LLM"
-    license: Apache-2.0
-
 nfpms:
   - id: forgen
     package_name: forgen
     file_name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Arch }}"
-    vendor: forgen
-    homepage: https://github.com/forgen/forgen
-    maintainer: forgen <noreply@forgen.dev>
+    vendor: rodascaar
+    homepage: https://github.com/rodascaar/forgen
+    maintainer: rodascaar <noreply@rodascaar.dev>
     description: "Agente de código agnóstico a lenguaje y proveedor LLM"
     license: Apache-2.0
     formats:

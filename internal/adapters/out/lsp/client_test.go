@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/forgen/forgen/internal/core/ports"
+	"github.com/rodascaar/forgen/internal/core/ports"
 )
 
 // fakeLSPServer responde al protocolo LSP sobre pipes.

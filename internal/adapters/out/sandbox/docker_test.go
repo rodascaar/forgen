@@ -3,7 +3,7 @@ package sandbox_test
 import (
 	"testing"
 
-	"github.com/forgen/forgen/internal/adapters/out/sandbox"
+	"github.com/rodascaar/forgen/internal/adapters/out/sandbox"
 )
 
 func TestDockerArgsConstruction(t *testing.T) {

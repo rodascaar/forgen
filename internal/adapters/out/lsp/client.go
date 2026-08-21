@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/forgen/forgen/internal/core/ports"
+	"github.com/rodascaar/forgen/internal/core/ports"
 )
 
 // requestTimeout limita las peticiones LSP.

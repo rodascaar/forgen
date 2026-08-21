@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"log/slog"
 
-	mcpadapter "github.com/forgen/forgen/internal/adapters/out/mcp"
-	"github.com/forgen/forgen/internal/application/tools"
-	"github.com/forgen/forgen/internal/core/domain"
-	"github.com/forgen/forgen/internal/core/ports"
+	mcpadapter "github.com/rodascaar/forgen/internal/adapters/out/mcp"
+	"github.com/rodascaar/forgen/internal/application/tools"
+	"github.com/rodascaar/forgen/internal/core/domain"
+	"github.com/rodascaar/forgen/internal/core/ports"
 )
 
 // Manager arranca servidores MCP y registra sus tools en el Registry.

@@ -11,7 +11,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/forgen/forgen/internal/core/ports"
+	"github.com/rodascaar/forgen/internal/core/ports"
 )
 
 // maxOutputBytes limita la salida capturada de un comando.

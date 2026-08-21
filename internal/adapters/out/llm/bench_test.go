@@ -3,7 +3,7 @@ package llm
 import (
 	"testing"
 
-	"github.com/forgen/forgen/internal/core/domain"
+	"github.com/rodascaar/forgen/internal/core/domain"
 )
 
 func benchmarkMessages() []domain.Message {

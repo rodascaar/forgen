@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/forgen/forgen/internal/core/domain"
+	"github.com/rodascaar/forgen/internal/core/domain"
 )
 
 // ContextBlock renderiza el estado del ferment como instrucciones de system

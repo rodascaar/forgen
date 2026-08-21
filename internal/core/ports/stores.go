@@ -3,7 +3,7 @@ package ports
 import (
 	"context"
 
-	"github.com/forgen/forgen/internal/core/domain"
+	"github.com/rodascaar/forgen/internal/core/domain"
 )
 
 // SessionStore persiste sesiones en un storage concreto (JSONL, SQLite, ...).

@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/forgen/forgen/internal/core/domain"
-	"github.com/forgen/forgen/internal/core/ports"
+	"github.com/rodascaar/forgen/internal/core/domain"
+	"github.com/rodascaar/forgen/internal/core/ports"
 )
 
 // sessionMeta es la cabecera del archivo de sesión.

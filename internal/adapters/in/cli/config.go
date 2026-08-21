@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	apppkg "github.com/forgen/forgen/internal/app"
+	apppkg "github.com/rodascaar/forgen/internal/app"
 	"github.com/spf13/cobra"
 )
 

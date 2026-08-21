@@ -3,7 +3,7 @@ package ports
 import (
 	"context"
 
-	"github.com/forgen/forgen/internal/core/domain"
+	"github.com/rodascaar/forgen/internal/core/domain"
 )
 
 // UsageRecorder registra el consumo de tokens de las llamadas al modelo.

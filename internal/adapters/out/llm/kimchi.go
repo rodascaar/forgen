@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/forgen/forgen/internal/core/domain"
-	"github.com/forgen/forgen/internal/core/ports"
+	"github.com/rodascaar/forgen/internal/core/domain"
+	"github.com/rodascaar/forgen/internal/core/ports"
 )
 
 // Kimchi es el adapter del gateway gestionado de Kimchi.

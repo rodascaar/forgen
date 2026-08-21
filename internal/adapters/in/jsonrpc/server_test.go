@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/forgen/forgen/internal/adapters/in/jsonrpc"
-	apppkg "github.com/forgen/forgen/internal/app"
+	"github.com/rodascaar/forgen/internal/adapters/in/jsonrpc"
+	apppkg "github.com/rodascaar/forgen/internal/app"
 )
 
 // buildApp crea un App apuntando a directorios temporales.

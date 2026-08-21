@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/forgen/forgen/internal/core/ports"
+	"github.com/rodascaar/forgen/internal/core/ports"
 )
 
 // braveSearchURL es el endpoint de la API de Brave Search.

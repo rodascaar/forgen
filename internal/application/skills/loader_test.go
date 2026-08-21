@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/forgen/forgen/internal/adapters/out/fs"
-	"github.com/forgen/forgen/internal/application/skills"
+	"github.com/rodascaar/forgen/internal/adapters/out/fs"
+	"github.com/rodascaar/forgen/internal/application/skills"
 )
 
 func setupSkills(t *testing.T) (*fs.OSFileSystem, []string) {

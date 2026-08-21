@@ -5,9 +5,9 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/forgen/forgen/internal/adapters/out/storage"
-	"github.com/forgen/forgen/internal/application/usage"
-	"github.com/forgen/forgen/internal/core/domain"
+	"github.com/rodascaar/forgen/internal/adapters/out/storage"
+	"github.com/rodascaar/forgen/internal/application/usage"
+	"github.com/rodascaar/forgen/internal/core/domain"
 )
 
 func TestSummarizeAggregatesByModel(t *testing.T) {

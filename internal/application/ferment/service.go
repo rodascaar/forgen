@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/forgen/forgen/internal/core/domain"
-	"github.com/forgen/forgen/internal/core/ports"
+	"github.com/rodascaar/forgen/internal/core/domain"
+	"github.com/rodascaar/forgen/internal/core/ports"
 	"github.com/google/uuid"
 )
 

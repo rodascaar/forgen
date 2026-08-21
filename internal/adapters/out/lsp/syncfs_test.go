@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/forgen/forgen/internal/core/ports"
+	"github.com/rodascaar/forgen/internal/core/ports"
 )
 
 // innerFS es un FileSystem mínimo en memoria.

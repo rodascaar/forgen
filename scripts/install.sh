@@ -1,9 +1,9 @@
 #!/bin/sh
 # Instalador de forgen.
-# Uso: curl -fsSL https://github.com/forgen/forgen/releases/latest/download/install.sh | bash
+# Uso: curl -fsSL https://github.com/rodascaar/forgen/releases/latest/download/install.sh | bash
 set -e
 
-REPO="forgen/forgen"
+REPO="rodascaar/forgen"
 # Por defecto instala el último release; override con FORGEN_VERSION.
 VERSION="${FORGEN_VERSION:-latest}"
 

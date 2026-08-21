@@ -5,7 +5,7 @@ package ports
 import (
 	"context"
 
-	"github.com/forgen/forgen/internal/core/domain"
+	"github.com/rodascaar/forgen/internal/core/domain"
 )
 
 // StreamEvent es un evento emitido durante una respuesta en streaming.

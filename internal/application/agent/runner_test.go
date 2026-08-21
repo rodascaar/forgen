@@ -7,12 +7,12 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/forgen/forgen/internal/adapters/out/fs"
-	"github.com/forgen/forgen/internal/application/agent"
-	"github.com/forgen/forgen/internal/application/session"
-	"github.com/forgen/forgen/internal/application/tools"
-	"github.com/forgen/forgen/internal/core/domain"
-	"github.com/forgen/forgen/internal/core/ports"
+	"github.com/rodascaar/forgen/internal/adapters/out/fs"
+	"github.com/rodascaar/forgen/internal/application/agent"
+	"github.com/rodascaar/forgen/internal/application/session"
+	"github.com/rodascaar/forgen/internal/application/tools"
+	"github.com/rodascaar/forgen/internal/core/domain"
+	"github.com/rodascaar/forgen/internal/core/ports"
 )
 
 // -- fakes --

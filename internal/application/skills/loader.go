@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/forgen/forgen/internal/core/ports"
+	"github.com/rodascaar/forgen/internal/core/ports"
 )
 
 // Skill es una habilidad reutilizable con instrucciones.

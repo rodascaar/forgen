@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/forgen/forgen/internal/core/ports"
+	"github.com/rodascaar/forgen/internal/core/ports"
 )
 
 // contextFileName es el nombre por defecto de las instrucciones de proyecto.

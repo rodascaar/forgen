@@ -8,7 +8,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/forgen/forgen/internal/core/domain"
+	"github.com/rodascaar/forgen/internal/core/domain"
 )
 
 // textMessenger imprime el flujo del agente en texto plano (headless).

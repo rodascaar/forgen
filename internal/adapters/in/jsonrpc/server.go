@@ -11,9 +11,9 @@ import (
 	"os"
 	"sync"
 
-	apppkg "github.com/forgen/forgen/internal/app"
-	"github.com/forgen/forgen/internal/application/agent"
-	"github.com/forgen/forgen/internal/core/domain"
+	apppkg "github.com/rodascaar/forgen/internal/app"
+	"github.com/rodascaar/forgen/internal/application/agent"
+	"github.com/rodascaar/forgen/internal/core/domain"
 )
 
 // request es una petición JSON-RPC 2.0 entrante.

@@ -10,9 +10,9 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	apppkg "github.com/forgen/forgen/internal/app"
-	"github.com/forgen/forgen/internal/application/agent"
-	"github.com/forgen/forgen/internal/core/domain"
+	apppkg "github.com/rodascaar/forgen/internal/app"
+	"github.com/rodascaar/forgen/internal/application/agent"
+	"github.com/rodascaar/forgen/internal/core/domain"
 )
 
 // spinnerFrames son los estados del indicador de actividad.

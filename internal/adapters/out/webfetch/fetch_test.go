@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/forgen/forgen/internal/adapters/out/webfetch"
+	"github.com/rodascaar/forgen/internal/adapters/out/webfetch"
 )
 
 func TestFetchStripsHTML(t *testing.T) {

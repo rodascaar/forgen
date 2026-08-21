@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/forgen/forgen/internal/core/ports"
+	"github.com/rodascaar/forgen/internal/core/ports"
 )
 
 // Client implementa ports.LSPClient sobre el transporte stdio.

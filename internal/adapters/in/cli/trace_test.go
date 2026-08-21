@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	apppkg "github.com/forgen/forgen/internal/app"
+	apppkg "github.com/rodascaar/forgen/internal/app"
 )
 
 func TestTraceRedactsSecrets(t *testing.T) {

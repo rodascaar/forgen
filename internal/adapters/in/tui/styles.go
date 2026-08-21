@@ -3,7 +3,7 @@ package tui
 
 import (
 	"github.com/charmbracelet/lipgloss"
-	"github.com/forgen/forgen/internal/core/domain"
+	"github.com/rodascaar/forgen/internal/core/domain"
 )
 
 // Styles agrupa los estilos renderizados desde el tema.

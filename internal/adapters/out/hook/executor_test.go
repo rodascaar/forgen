@@ -8,8 +8,8 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/forgen/forgen/internal/adapters/out/hook"
-	"github.com/forgen/forgen/internal/core/ports"
+	"github.com/rodascaar/forgen/internal/adapters/out/hook"
+	"github.com/rodascaar/forgen/internal/core/ports"
 )
 
 type passthroughExecutor struct {

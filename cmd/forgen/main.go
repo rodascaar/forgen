@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/forgen/forgen/internal/adapters/in/cli"
+	"github.com/rodascaar/forgen/internal/adapters/in/cli"
 )
 
 func main() {

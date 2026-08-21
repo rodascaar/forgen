@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/forgen/forgen/internal/adapters/out/storage"
-	"github.com/forgen/forgen/internal/application/ferment"
-	"github.com/forgen/forgen/internal/core/domain"
+	"github.com/rodascaar/forgen/internal/adapters/out/storage"
+	"github.com/rodascaar/forgen/internal/application/ferment"
+	"github.com/rodascaar/forgen/internal/core/domain"
 )
 
 func newService(t *testing.T) *ferment.Service {

@@ -3,8 +3,8 @@ package cli
 import (
 	"os"
 
-	"github.com/forgen/forgen/internal/adapters/in/jsonrpc"
-	apppkg "github.com/forgen/forgen/internal/app"
+	"github.com/rodascaar/forgen/internal/adapters/in/jsonrpc"
+	apppkg "github.com/rodascaar/forgen/internal/app"
 	"github.com/spf13/cobra"
 )
 

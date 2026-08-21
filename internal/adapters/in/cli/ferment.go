@@ -8,8 +8,8 @@ import (
 	"os"
 	"strings"
 
-	apppkg "github.com/forgen/forgen/internal/app"
-	"github.com/forgen/forgen/internal/core/domain"
+	apppkg "github.com/rodascaar/forgen/internal/app"
+	"github.com/rodascaar/forgen/internal/core/domain"
 	"github.com/spf13/cobra"
 )
 

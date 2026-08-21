@@ -1,4 +1,4 @@
-module github.com/forgen/forgen
+module github.com/rodascaar/forgen
 
 go 1.26.3
 
@@ -10,6 +10,7 @@ require (
 	github.com/go-enry/go-enry/v2 v2.9.6
 	github.com/google/uuid v1.6.0
 	github.com/spf13/cobra v1.10.2
+	golang.org/x/net v0.58.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -36,7 +37,6 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 )

@@ -4,7 +4,7 @@ package ferment
 import (
 	"fmt"
 
-	"github.com/forgen/forgen/internal/core/domain"
+	"github.com/rodascaar/forgen/internal/core/domain"
 )
 
 // allowedTransitions define las transiciones válidas del estado del ferment.

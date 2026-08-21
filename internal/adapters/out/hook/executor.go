@@ -12,7 +12,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/forgen/forgen/internal/core/ports"
+	"github.com/rodascaar/forgen/internal/core/ports"
 )
 
 // Result es el resultado de aplicar los hooks a un comando.

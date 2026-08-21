@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/forgen/forgen/internal/adapters/out/fs"
-	"github.com/forgen/forgen/internal/application/tools"
-	"github.com/forgen/forgen/internal/core/domain"
-	"github.com/forgen/forgen/internal/core/ports"
+	"github.com/rodascaar/forgen/internal/adapters/out/fs"
+	"github.com/rodascaar/forgen/internal/application/tools"
+	"github.com/rodascaar/forgen/internal/core/domain"
+	"github.com/rodascaar/forgen/internal/core/ports"
 )
 
 func newRegistry(t *testing.T) *tools.Registry {

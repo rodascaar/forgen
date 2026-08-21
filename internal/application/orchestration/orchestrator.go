@@ -9,9 +9,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/forgen/forgen/internal/adapters/out/llm"
-	"github.com/forgen/forgen/internal/core/domain"
-	"github.com/forgen/forgen/internal/core/ports"
+	"github.com/rodascaar/forgen/internal/adapters/out/llm"
+	"github.com/rodascaar/forgen/internal/core/domain"
+	"github.com/rodascaar/forgen/internal/core/ports"
 )
 
 // phaseTagHeader y modelTagHeader se envían a los gateways para atribución.

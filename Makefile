@@ -1,7 +1,7 @@
 .PHONY: build test test-race lint vet fmt dev install clean bench release
 
 BINARY := forgen
-MODULE := github.com/forgen/forgen
+MODULE := github.com/rodascaar/forgen
 VERSION ?= 0.1.0
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X $(MODULE)/internal/app.Version=$(VERSION) -X $(MODULE)/internal/app.Commit=$(COMMIT)

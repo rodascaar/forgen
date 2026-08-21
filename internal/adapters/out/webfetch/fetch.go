@@ -31,7 +31,7 @@ func Fetch(ctx context.Context, rawURL string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	request.Header.Set("User-Agent", "forgen/0.1 (+https://github.com/forgen/forgen)")
+	request.Header.Set("User-Agent", "forgen/0.1 (+https://github.com/rodascaar/forgen)")
 
 	response, err := client.Do(request)
 	if err != nil {

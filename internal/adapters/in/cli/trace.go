@@ -7,8 +7,8 @@ import (
 	"runtime"
 	"strings"
 
-	apppkg "github.com/forgen/forgen/internal/app"
-	"github.com/forgen/forgen/internal/application/usage"
+	apppkg "github.com/rodascaar/forgen/internal/app"
+	"github.com/rodascaar/forgen/internal/application/usage"
 	"github.com/spf13/cobra"
 )
 

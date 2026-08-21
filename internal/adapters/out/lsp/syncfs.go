@@ -3,7 +3,7 @@ package lsp
 import (
 	"context"
 
-	"github.com/forgen/forgen/internal/core/ports"
+	"github.com/rodascaar/forgen/internal/core/ports"
 )
 
 // DocumentSyncer notifica cambios de documentos a un listener externo.
