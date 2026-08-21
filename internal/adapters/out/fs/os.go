@@ -116,6 +116,10 @@ func (o *OSFileSystem) Search(_ context.Context, root, query, include string) ([
 			if relErr != nil {
 				return nil
 			}
+			// doublestar usa "/" como separador; en Windows filepath.Rel
+			// devuelve "\" (ej. src\main.go). Normalizar para que el patrón
+			// coincida independientemente del SO.
+			rel = filepath.ToSlash(rel)
 			// Un patrón sin separador (ej. *.go) debe coincidir a cualquier
 			// profundidad: se normaliza a **/*.go.
 			includePattern := include

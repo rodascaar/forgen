@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/forgen/forgen/internal/adapters/out/hook"
@@ -32,6 +33,9 @@ func writeHook(t *testing.T, dir, name, content string) {
 }
 
 func TestHookRewritesCommand(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("los hooks de bash requieren un shell Unix")
+	}
 	dir := t.TempDir() + "/hooks/bash"
 	// Hook que antepone "echo rewrote; " al comando.
 	writeHook(t, dir, "10-rewrite.sh", `#!/bin/sh
@@ -52,6 +56,9 @@ echo "safe-command: $cmd"
 }
 
 func TestHookBlocksCommand(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("los hooks de bash requieren un shell Unix")
+	}
 	dir := t.TempDir() + "/hooks/bash"
 	writeHook(t, dir, "20-block.sh", `#!/bin/sh
 read cmd
