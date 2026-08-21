@@ -74,6 +74,10 @@ func newModel(app *apppkg.App) Model {
 	input.Placeholder = "Describe tu tarea... (/ para comandos, ? ayuda, Enter envía)"
 	input.Prompt = "❯ "
 	input.Width = 80
+	// El foco debe quedar en el input del modelo vivo. No se puede hacer en
+	// Init() porque tiene receiver por valor y descarta las mutaciones; aquí
+	// (al construir el modelo que se devuelve) el foco sí persiste.
+	input.Focus()
 
 	workspace, _ := os.Getwd()
 	m := Model{
@@ -140,10 +144,9 @@ func (m *Model) refreshFromConfig() {
 	}
 }
 
-// Init implementa tea.Model. El setup se hace en newModel para que los mensajes
-// de onboarding no se pierdan (Init solo devuelve un Cmd, no el modelo).
+// Init implementa tea.Model. El setup (incluido el foco del input) se hace en
+// newModel para que persista; Init solo arranca el parpadeo del cursor.
 func (m Model) Init() tea.Cmd {
-	m.input.Focus()
 	return textinput.Blink
 }
 
@@ -560,13 +563,13 @@ func sortStrings(items []string) {
 	}
 }
 
-// toggleAgent alterna entre build y plan.
+// toggleAgent alterna entre build y plan. El cambio se refleja en la barra de
+// estado (agente:X), por lo que no se anexa ninguna línea al transcript.
 func (m *Model) toggleAgent() {
 	agents := []string{"build", "plan"}
 	for index, name := range agents {
 		if name == m.agentName {
 			m.agentName = agents[(index+1)%len(agents)]
-			m.append("notice", fmt.Sprintf("Agente: %s", m.agentName))
 			return
 		}
 	}

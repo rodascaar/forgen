@@ -87,6 +87,9 @@ forgen auth [proveedor]             # guarda tu API key y detecta tus modelos
 forgen provider list                # proveedores configurados + presets
 forgen provider add <proveedor>     # añade un proveedor conocido
 forgen provider remove <proveedor>  # elimina un proveedor y su credencial
+forgen upgrade --check             # comprueba si hay una versión nueva
+forgen upgrade                     # se actualiza a la última versión
+forgen version                     # muestra la versión actual
 ```
 
 ### Dentro de la TUI (slash commands)

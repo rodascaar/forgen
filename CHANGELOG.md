@@ -31,6 +31,8 @@ el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 
 ### Añadido
 
+- **`forgen upgrade`**: auto-actualización desde GitHub Releases (`--check` para
+  comprobar sin tocar nada, `-y` para omitir confirmación) y `forgen version`.
 - **UX de la TUI**: slash commands dentro de la interfaz interactiva (`/init`,
   `/provider`, `/model`, `/sessions`, `/help`, `/quit`), overlay de ayuda con
   `?`, word-wrap y scroll con `PgUp/PgDn`.
@@ -41,11 +43,15 @@ el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 
 ### Corregido
 
+- **No se podía escribir en la TUI**: `Init()` con receiver por valor descartaba
+  `input.Focus()`, dejando el campo sin foco; ahora el input se enfoca al
+  construir el modelo.
 - **Pantalla en blanco al primer arranque**: los mensajes de onboarding que
   `Init()` descartaba por receiver por valor ahora persisten.
 - **Prompt de permisos**: la tecla `?` muestra el comando completo antes de
   aprobar/denegar.
 - **`forgen ask`**: avisa de forma clara cuando falta la API key en vez de
   fallar con un error de autenticación críptico.
+- **Ruido del Tab**: cambiar de agente ya no llena el transcript con avisos.
 
 [0.1.0]: https://github.com/rodascaar/forgen/releases/tag/v0.1.0
