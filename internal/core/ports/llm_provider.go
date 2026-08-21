@@ -57,4 +57,7 @@ type LLMProvider interface {
 	// StreamChat envía la petición y emite eventos por el handler.
 	// Nunca debe retornar nil-error sin emitir un DoneEvent.
 	StreamChat(ctx context.Context, request ChatRequest, handler StreamHandler) error
+	// ListModels devuelve los IDs de modelos disponibles para el usuario
+	// autenticado, consultando el endpoint de listado del proveedor.
+	ListModels(ctx context.Context) ([]string, error)
 }

@@ -90,6 +90,31 @@ func NewOpenAICompatible(name string, client *Client) *OpenAICompatible {
 // Name implementa ports.LLMProvider.
 func (o *OpenAICompatible) Name() string { return o.name }
 
+// ListModels implementa ports.LLMProvider: consulta GET /models.
+func (o *OpenAICompatible) ListModels(ctx context.Context) ([]string, error) {
+	response, err := getJSON(ctx, o.client, "/models")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = response.Body.Close() }()
+
+	var payload struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		return nil, fmt.Errorf("parsear modelos: %w", err)
+	}
+	models := make([]string, 0, len(payload.Data))
+	for _, model := range payload.Data {
+		if model.ID != "" {
+			models = append(models, model.ID)
+		}
+	}
+	return models, nil
+}
+
 // StreamChat implementa ports.LLMProvider.
 func (o *OpenAICompatible) StreamChat(ctx context.Context, request ports.ChatRequest, handler ports.StreamHandler) error {
 	payload := openAIRequest{

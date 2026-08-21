@@ -45,6 +45,8 @@ Ejecuta 'forgen' sin argumentos para la interfaz interactiva.`,
 	root.AddCommand(newSessionsCommand(app))
 	root.AddCommand(newConfigCommand(app))
 	root.AddCommand(newAgentCommand(app))
+	root.AddCommand(newProviderCommand(app))
+	root.AddCommand(newAuthCommand(app))
 	root.AddCommand(newFermentCommand(app))
 	root.AddCommand(newUsageCommand(app))
 	root.AddCommand(newTraceCommand(app))

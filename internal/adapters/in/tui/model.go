@@ -45,6 +45,7 @@ type Model struct {
 	width           int
 	height          int
 	quitting        bool
+	cancelRun       context.CancelFunc
 }
 
 // Run inicia la TUI en modo pantalla alternativa.
@@ -86,8 +87,12 @@ func (m Model) Init() tea.Cmd {
 	}
 	m.styles = newStyles(appConfig.Theme)
 	m.modelKey = fmt.Sprintf("%s/%s", appConfig.Default.Provider, appConfig.Default.Model)
+	if appConfig.Default.Provider == "" || appConfig.Default.Model == "" {
+		m.append("error", "No hay modelo configurado. Ejecuta 'forgen auth' o 'forgen init'.")
+	} else {
+		m.append("notice", fmt.Sprintf("forgen — agente %s · modelo %s · cwd %s", m.agentName, m.modelKey, m.workspace))
+	}
 	m.input.Focus()
-	m.append("notice", fmt.Sprintf("forgen — agente %s · modelo %s · cwd %s", m.agentName, m.modelKey, m.workspace))
 	return textinput.Blink
 }
 
@@ -187,7 +192,10 @@ func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch message.String() {
 	case "ctrl+c", "q":
 		if m.running {
-			m.append("notice", "Agente en ejecución; espera a que termine o usa Ctrl+C de nuevo.")
+			if m.cancelRun != nil {
+				m.cancelRun()
+			}
+			m.append("notice", "Cancelando petición...")
 			return m, nil
 		}
 		m.quitting = true
@@ -207,7 +215,9 @@ func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.input.SetValue("")
 		m.append("user", prompt)
-		return m, m.startRun(prompt)
+		ctx, cancel := context.WithCancel(context.Background())
+		m.cancelRun = cancel
+		return m, m.startRun(ctx, prompt)
 	}
 
 	var command tea.Cmd
@@ -229,21 +239,20 @@ func (m *Model) toggleAgent() {
 }
 
 // startRun lanza el agente en segundo plano y devuelve el comando del spinner.
-func (m Model) startRun(prompt string) tea.Cmd {
+func (m Model) startRun(ctx context.Context, prompt string) tea.Cmd {
 	m.running = true
 	m.assistantBuffer = ""
 
 	runCommand := func() tea.Msg {
-		return runAgent(m.app, m.sessionID, m.workspace, m.agentName, prompt, m.program)
+		return runAgent(ctx, m.app, m.sessionID, m.workspace, m.agentName, prompt, m.program)
 	}
 	ticker := tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg{} })
 	return tea.Batch(runCommand, ticker)
 }
 
 // runAgent ejecuta un turno del agente en segundo plano.
-func runAgent(app *apppkg.App, sessionID, workspace, agentName, prompt string,
+func runAgent(ctx context.Context, app *apppkg.App, sessionID, workspace, agentName, prompt string,
 	program *tea.Program) tea.Msg {
-	ctx := context.Background()
 	appConfig, err := app.LoadConfig(ctx)
 	if err != nil {
 		return runDoneMsg{err: err}
@@ -320,14 +329,20 @@ func (m Model) View() string {
 }
 
 func (m Model) renderTranscript(limit int) string {
-	if len(m.transcript) == 0 {
+	lines := m.transcript
+	// Añadir el buffer "vivo" del asistente mientras genera, para que el
+	// texto del streaming se vea en tiempo real y la TUI no parezca colgada.
+	if m.assistantBuffer != "" {
+		lines = append(append([]transcriptLine{}, lines...), transcriptLine{kind: "assistant", text: m.assistantBuffer})
+	}
+	if len(lines) == 0 {
 		return m.styles.dim.Render(" (sin conversación) ")
 	}
-	start := len(m.transcript) - limit
+	start := len(lines) - limit
 	if start < 0 {
 		start = 0
 	}
-	lines := m.transcript[start:]
+	lines = lines[start:]
 	rendered := make([]string, 0, len(lines))
 	for _, line := range lines {
 		rendered = append(rendered, m.styles.forKind(line.kind).Render(line.text))

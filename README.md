@@ -22,8 +22,20 @@ go install ./cmd/forgen
 
 ```bash
 forgen init          # wizard interactivo (proveedores + modelo por defecto)
+forgen auth          # guarda tu API key y detecta los modelos de tu cuenta
 forgen doctor        # diagnóstico del entorno
 ```
+
+`forgen auth` (o `forgen provider add <proveedor>`) te deja configurar un
+proveedor conocido escribiendo **solo tu API key**: forgen consulta el endpoint
+de listado del proveedor y guarda automáticamente los modelos disponibles para
+tu cuenta. La key se almacena en el almacén seguro del sistema operativo
+(Keychain / Secret Service / Credential Manager) con respaldo local `0600`, y
+nunca viaja al contexto del agente, logs, prompts ni dumps de configuración.
+
+Soporta los principales proveedores OpenAI-compatibles (OpenAI, OpenRouter,
+Groq, Cerebras, Together, DeepSeek, Kimi, xAI, Gemini, Zhipu, Mistral, etc.)
+y Anthropic nativo. La lista completa está en `forgen provider list`.
 
 La configuración vive en `~/.config/forgen/config.yaml` (XDG) y soporta estas capas de precedencia: **defaults < archivo < variables de entorno (`FORGEN_*`) < flags de CLI**.
 
@@ -66,6 +78,10 @@ forgen sessions resume <id>         # ver una sesión
 forgen sessions delete <id>         # eliminar una sesión
 forgen config                       # ver configuración efectiva
 forgen agent use plan               # cambiar agente por defecto
+forgen auth [proveedor]             # guarda tu API key y detecta tus modelos
+forgen provider list                # proveedores configurados + presets
+forgen provider add <proveedor>     # añade un proveedor conocido
+forgen provider remove <proveedor>  # elimina un proveedor y su credencial
 ```
 
 ## Proveedores sin lock-in

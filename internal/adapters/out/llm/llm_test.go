@@ -137,3 +137,50 @@ func toJSON(value any) string {
 	data, _ := json.Marshal(value)
 	return string(data)
 }
+
+func TestOpenAICompatibleListModels(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			t.Errorf("ruta inesperada: %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
+			t.Errorf("auth inesperada: %q", got)
+		}
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"gpt-5"},{"id":"gpt-5-mini"},{"id":""}]}`))
+	}))
+	defer server.Close()
+
+	provider := llm.NewOpenAICompatible("openai", clientFor(server.URL))
+	models, err := provider.ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	if len(models) != 2 || models[0] != "gpt-5" || models[1] != "gpt-5-mini" {
+		t.Fatalf("modelos inesperados: %v", models)
+	}
+}
+
+func TestAnthropicListModels(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Errorf("ruta inesperada: %s", r.URL.Path)
+		}
+		if got := r.Header.Get("x-api-key"); got != "test-key" {
+			t.Errorf("x-api-key inesperada: %q", got)
+		}
+		if got := r.Header.Get("anthropic-version"); got == "" {
+			t.Errorf("falta anthropic-version")
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"claude-sonnet-4-5","type":"model"}]}`))
+	}))
+	defer server.Close()
+
+	provider := llm.NewAnthropic("anthropic", clientFor(server.URL))
+	models, err := provider.ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	if len(models) != 1 || models[0] != "claude-sonnet-4-5" {
+		t.Fatalf("modelos inesperados: %v", models)
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/rodascaar/forgen/internal/adapters/out/credentials"
 	"github.com/rodascaar/forgen/internal/adapters/out/exec"
 	"github.com/rodascaar/forgen/internal/adapters/out/fs"
 	gitadapter "github.com/rodascaar/forgen/internal/adapters/out/git"
@@ -47,6 +48,7 @@ type App struct {
 	Language        ports.LanguageDetector
 	Toolchain       ports.ToolchainProbe
 	LLMFactory      *llm.Factory
+	Credentials     ports.CredentialStore
 	Skills          []skills.Skill
 	MCP             *mcp.Manager
 	LSP             *lsp.Manager
@@ -63,6 +65,7 @@ func NewApp(logger *slog.Logger) (*App, error) {
 
 	configStore := storage.NewYAMLConfigStore(paths.ConfigFile)
 	configService := config.NewService(configStore, os.Getenv, config.Overrides{})
+	credentialStore := credentials.NewStore(paths.CredentialsFile)
 
 	// Config efectiva temprana (ejecución, web, MCP).
 	appConfig, configErr := configService.Load(context.Background())
@@ -145,6 +148,7 @@ func NewApp(logger *slog.Logger) (*App, error) {
 		Language:       language.NewDetector(),
 		Toolchain:      language.NewToolchainProbe(),
 		LLMFactory:     llm.NewFactory(logger),
+		Credentials:    credentialStore,
 		Skills:         discoveredSkills,
 		MCP:            mcpManager,
 		LSP:            lspManager,
@@ -238,11 +242,29 @@ func (a *App) ResolveProvider(config domain.AppConfig, model domain.Model) (port
 	if !ok {
 		return nil, fmt.Errorf("proveedor %q no configurado", model.Provider)
 	}
-	provider, err := a.LLMFactory.Create(providerConfig, os.Getenv)
+	provider, err := a.LLMFactory.CreateWithKeyResolver(providerConfig, a.providerAPIKey, nil)
 	if err != nil {
 		return nil, err
 	}
 	return provider, nil
+}
+
+// ProviderCredentialKey devuelve la clave del almacén de credenciales para un
+// proveedor. El secreto vive separado de la metadata (config.yaml).
+func ProviderCredentialKey(name string) string {
+	return "providers/" + name
+}
+
+// providerAPIKey resuelve la API key de un proveedor: primero el almacén seguro
+// de credenciales, luego la variable de entorno (fallback para CI/entornos).
+// Nunca registra ni expone el valor del secreto.
+func (a *App) providerAPIKey(config domain.ProviderConfig) string {
+	if a.Credentials != nil {
+		if secret, err := a.Credentials.Get(context.Background(), ProviderCredentialKey(config.Name)); err == nil && secret != "" {
+			return secret
+		}
+	}
+	return config.ResolveAPIKey(os.Getenv)
 }
 
 // ResolveRunModel resuelve modelo y provider para un prompt. Si no hay
@@ -266,7 +288,7 @@ func (a *App) ResolveRunModel(ctx context.Context, prompt, overrideProvider, ove
 		return model, provider, domain.PhaseBuild, nil
 	}
 
-	orchestrator := orchestration.NewOrchestrator(appConfig, a.LLMFactory, a.Logger)
+	orchestrator := orchestration.NewOrchestrator(appConfig, a.LLMFactory, a.providerAPIKey, a.Logger)
 	phase := orchestrator.Classify(prompt)
 	model := orchestrator.SelectFor(phase, prompt)
 	provider, err := orchestrator.Provider(ctx, model)

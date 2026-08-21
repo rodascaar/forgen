@@ -28,23 +28,27 @@ var complexityKeywords = []string{
 
 // Orchestrator clasifica tareas por fase y elige el modelo por rol.
 type Orchestrator struct {
-	config  domain.AppConfig
-	factory *llm.Factory
-	getenv  func(string) string
-	logger  *slog.Logger
-	phase   domain.AgentPhase
-	model   domain.Model
+	config     domain.AppConfig
+	factory    *llm.Factory
+	resolveKey func(domain.ProviderConfig) string
+	logger     *slog.Logger
+	phase      domain.AgentPhase
+	model      domain.Model
 }
 
 // NewOrchestrator construye el orquestador con la configuración efectiva.
-func NewOrchestrator(config domain.AppConfig, factory *llm.Factory, logger *slog.Logger) *Orchestrator {
+// resolveKey resuelve la API key del proveedor (CredentialStore + env fallback).
+func NewOrchestrator(config domain.AppConfig, factory *llm.Factory, resolveKey func(domain.ProviderConfig) string, logger *slog.Logger) *Orchestrator {
+	if resolveKey == nil {
+		resolveKey = func(pc domain.ProviderConfig) string { return pc.ResolveAPIKey(os.Getenv) }
+	}
 	return &Orchestrator{
-		config:  config,
-		factory: factory,
-		getenv:  os.Getenv,
-		logger:  logger,
-		phase:   domain.PhaseBuild,
-		model:   domain.Model{Provider: config.Default.Provider, ID: config.Default.Model},
+		config:     config,
+		factory:    factory,
+		resolveKey: resolveKey,
+		logger:     logger,
+		phase:      domain.PhaseBuild,
+		model:      domain.Model{Provider: config.Default.Provider, ID: config.Default.Model},
 	}
 }
 
@@ -109,7 +113,7 @@ func (o *Orchestrator) Provider(ctx context.Context, model domain.Model) (ports.
 		phaseTagHeader: string(o.phase),
 		modelTagHeader: model.Key(),
 	}
-	provider, err := o.factory.CreateWithTags(providerConfig, o.getenv, tags)
+	provider, err := o.factory.CreateWithKeyResolver(providerConfig, o.resolveKey, tags)
 	if err != nil {
 		return nil, err
 	}

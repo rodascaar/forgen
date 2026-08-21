@@ -44,6 +44,12 @@ func runInit(ctx context.Context, app *apppkg.App, in io.Reader, out io.Writer) 
 		}
 	}
 
+	// Atajo: usar un proveedor conocido (preset) con detección automática.
+	known := ask(reader, out, "\n¿Usar un proveedor conocido (p.ej. openai, openrouter, groq)? [Y/n] ")
+	if !strings.EqualFold(known, "n") {
+		return runAuth(ctx, app, "", in, out)
+	}
+
 	provider, err := promptProvider(reader, out)
 	if err != nil {
 		return err

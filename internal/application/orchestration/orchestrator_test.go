@@ -20,7 +20,7 @@ func testConfig() domain.AppConfig {
 }
 
 func newOrchestrator(config domain.AppConfig) *orchestration.Orchestrator {
-	return orchestration.NewOrchestrator(config, llm.NewFactory(slog.Default()), slog.Default())
+	return orchestration.NewOrchestrator(config, llm.NewFactory(slog.Default()), nil, slog.Default())
 }
 
 func TestClassifyPhases(t *testing.T) {

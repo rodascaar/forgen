@@ -7,13 +7,14 @@ import (
 
 // Paths agrupa las rutas del sistema de archivos de forgen (XDG).
 type Paths struct {
-	ConfigDir   string
-	DataDir     string
-	ConfigFile  string
-	SessionsDir string
-	FermentsDir string
-	UsageFile   string
-	RulesFile   string
+	ConfigDir       string
+	DataDir         string
+	ConfigFile      string
+	SessionsDir     string
+	FermentsDir     string
+	UsageFile       string
+	RulesFile       string
+	CredentialsFile string
 }
 
 // ResolvePaths calcula las rutas siguiendo la especificación XDG, con
@@ -28,17 +29,17 @@ func ResolvePaths() Paths {
 		dataDir = filepath.Join(xdgDataHome(), "forgen")
 	}
 	return Paths{
-		ConfigDir:   configDir,
-		DataDir:     dataDir,
-		ConfigFile:  filepath.Join(configDir, "config.yaml"),
-		SessionsDir: filepath.Join(dataDir, "sessions"),
-		FermentsDir: filepath.Join(dataDir, "ferments"),
-		UsageFile:   filepath.Join(dataDir, "usage.jsonl"),
-		RulesFile:   filepath.Join(dataDir, "permissions.yaml"),
+		ConfigDir:       configDir,
+		DataDir:         dataDir,
+		ConfigFile:      filepath.Join(configDir, "config.yaml"),
+		SessionsDir:     filepath.Join(dataDir, "sessions"),
+		FermentsDir:     filepath.Join(dataDir, "ferments"),
+		UsageFile:       filepath.Join(dataDir, "usage.jsonl"),
+		RulesFile:       filepath.Join(dataDir, "permissions.yaml"),
+		CredentialsFile: filepath.Join(configDir, "credentials"),
 	}
 }
 
-// EnsureDirs crea los directorios de configuración y datos.
 func (p Paths) EnsureDirs() error {
 	for _, dir := range []string{p.ConfigDir, p.DataDir, p.SessionsDir, p.FermentsDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {

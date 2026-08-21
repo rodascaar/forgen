@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"strings"
 
 	"github.com/rodascaar/forgen/internal/core/domain"
 	"github.com/rodascaar/forgen/internal/core/ports"
@@ -154,22 +153,11 @@ func ResolveModel(config domain.AppConfig, providerName, modelID string) (domain
 	if modelID == "" {
 		modelID = config.Default.Model
 	}
-	provider, ok := config.FindProvider(providerName)
-	if !ok {
+	if _, ok := config.FindProvider(providerName); !ok {
 		return domain.Model{}, fmt.Errorf("proveedor %q no configurado", providerName)
 	}
-	if modelID != "" && !contains(provider.Models, modelID) {
-		return domain.Model{}, fmt.Errorf("modelo %q no listado en proveedor %q (disponibles: %s)",
-			modelID, providerName, strings.Join(provider.Models, ", "))
-	}
+	// El listado de modelos es informativo, no un candado: el usuario puede
+	// referenciar cualquier modelo que su cuenta soporte (los proveedores
+	// cambian de catálogo constantemente). "*" habilita explícitamente todos.
 	return domain.Model{Provider: providerName, ID: modelID}, nil
-}
-
-func contains(items []string, target string) bool {
-	for _, item := range items {
-		if item == target {
-			return true
-		}
-	}
-	return false
 }

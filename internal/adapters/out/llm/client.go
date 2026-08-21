@@ -21,8 +21,10 @@ const maxRetries = 4
 // baseBackoff es la espera inicial entre reintentos.
 const baseBackoff = 500 * time.Millisecond
 
-// clientTimeout limita la duración total de cada intento HTTP.
-const clientTimeout = 5 * time.Minute
+// clientTimeout limita la duración total de cada intento HTTP. Un valor
+// acotado evita que una petición a un endpoint bloqueado cuelgue la UI
+// durante minutos; el streaming de respuestas largas suele completarse antes.
+const clientTimeout = 90 * time.Second
 
 // Client es un cliente HTTP compartido con retry exponencial y fail-fast.
 type Client struct {
@@ -169,5 +171,12 @@ func (c *Client) StreamSSE(body io.Reader, onData func(data string) error) error
 func postJSON(ctx context.Context, client *Client, path string, payload any) (*http.Response, error) {
 	return client.Do(ctx, http.MethodPost, path, func() ([]byte, error) {
 		return json.Marshal(payload)
+	})
+}
+
+// getJSON es un helper para peticiones GET sin cuerpo (ej: listar modelos).
+func getJSON(ctx context.Context, client *Client, path string) (*http.Response, error) {
+	return client.Do(ctx, http.MethodGet, path, func() ([]byte, error) {
+		return nil, nil
 	})
 }

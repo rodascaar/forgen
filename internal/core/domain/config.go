@@ -140,14 +140,11 @@ func (c AppConfig) FindProvider(name string) (ProviderConfig, bool) {
 }
 
 // Validate verifica la consistencia de la configuración.
+// El listado de modelos es informativo (se detecta vía 'forgen auth'), por lo
+// que no se exige que un proveedor defina modelos para considerarse válido.
 func (c AppConfig) Validate() error {
 	if _, ok := c.FindProvider(c.Default.Provider); !ok {
 		return fmt.Errorf("proveedor por defecto %q no está configurado", c.Default.Provider)
-	}
-	for _, provider := range c.Providers {
-		if len(provider.Models) == 0 {
-			return fmt.Errorf("el proveedor %q no define modelos", provider.Name)
-		}
 	}
 	return nil
 }

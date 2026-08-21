@@ -77,11 +77,39 @@ type Anthropic struct {
 // NewAnthropic construye el adapter de Anthropic.
 func NewAnthropic(name string, client *Client) *Anthropic {
 	client.ExtraHeaders["anthropic-version"] = anthropicAPIVersion
+	if client.APIKey != "" {
+		client.ExtraHeaders["x-api-key"] = client.APIKey
+	}
 	return &Anthropic{name: name, client: client}
 }
 
 // Name implementa ports.LLMProvider.
 func (a *Anthropic) Name() string { return a.name }
+
+// ListModels implementa ports.LLMProvider: consulta GET /v1/models.
+func (a *Anthropic) ListModels(ctx context.Context) ([]string, error) {
+	response, err := getJSON(ctx, a.client, "/v1/models")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = response.Body.Close() }()
+
+	var payload struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		return nil, fmt.Errorf("parsear modelos Anthropic: %w", err)
+	}
+	models := make([]string, 0, len(payload.Data))
+	for _, model := range payload.Data {
+		if model.ID != "" {
+			models = append(models, model.ID)
+		}
+	}
+	return models, nil
+}
 
 // StreamChat implementa ports.LLMProvider.
 func (a *Anthropic) StreamChat(ctx context.Context, request ports.ChatRequest, handler ports.StreamHandler) error {

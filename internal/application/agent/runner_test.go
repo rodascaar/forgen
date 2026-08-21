@@ -24,6 +24,8 @@ type fakeProvider struct {
 
 func (f *fakeProvider) Name() string { return "fake" }
 
+func (f *fakeProvider) ListModels(ctx context.Context) ([]string, error) { return nil, nil }
+
 func (f *fakeProvider) StreamChat(ctx context.Context, request ports.ChatRequest, handler ports.StreamHandler) error {
 	f.calls++
 	return f.streamFn(ctx, request, handler)

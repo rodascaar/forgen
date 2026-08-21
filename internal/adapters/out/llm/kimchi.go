@@ -28,6 +28,11 @@ func NewKimchi(name string, client *Client) *Kimchi {
 // Name implementa ports.LLMProvider.
 func (k *Kimchi) Name() string { return k.name }
 
+// ListModels implementa ports.LLMProvider delegando en OpenAI-compatible.
+func (k *Kimchi) ListModels(ctx context.Context) ([]string, error) {
+	return k.openai.ListModels(ctx)
+}
+
 // StreamChat implementa ports.LLMProvider delegando en OpenAI-compatible.
 func (k *Kimchi) StreamChat(ctx context.Context, request ports.ChatRequest, handler ports.StreamHandler) error {
 	// El gateway espera el ID completo "provider/model" para el routing multi-modelo.

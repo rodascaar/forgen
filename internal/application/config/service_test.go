@@ -89,8 +89,9 @@ func TestResolveModelValidation(t *testing.T) {
 	if _, err := config.ResolveModel(appConfig, "openai", "gpt-5"); err != nil {
 		t.Fatalf("modelo válido rechazado: %v", err)
 	}
-	if _, err := config.ResolveModel(appConfig, "openai", "gpt-4"); err == nil {
-		t.Fatal("esperaba error para modelo no listado")
+	// El listado es informativo: un modelo no listado ya no bloquea.
+	if _, err := config.ResolveModel(appConfig, "openai", "gpt-4"); err != nil {
+		t.Fatalf("modelo no listado debería permitirse: %v", err)
 	}
 	if _, err := config.ResolveModel(appConfig, "missing", ""); err == nil {
 		t.Fatal("esperaba error para proveedor inexistente")
