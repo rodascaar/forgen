@@ -236,6 +236,89 @@ func (a *App) NewRunner(ctx context.Context, deps RunnerDeps) (*agent.Runner, er
 	})
 }
 
+// ValidateProviderKey valida una API key contra el proveedor y devuelve los
+// modelos disponibles para la cuenta. Compartido por CLI (auth) y TUI (init).
+func (a *App) ValidateProviderKey(ctx context.Context, config domain.ProviderConfig, apiKey string) ([]string, error) {
+	provider, err := a.LLMFactory.CreateWithKeyResolver(config, func(domain.ProviderConfig) string {
+		return apiKey
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	models, err := provider.ListModels(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(models) == 0 {
+		return config.Models, nil
+	}
+	return models, nil
+}
+
+// HasCredential devuelve true si el proveedor tiene una API key disponible
+// (almacén seguro o variable de entorno). Usado para detectar primer uso.
+func (a *App) HasCredential(config domain.ProviderConfig) bool {
+	return a.providerAPIKey(config) != ""
+}
+
+// AddProvider hace upsert del proveedor, lo deja como default y persiste.
+func (a *App) AddProvider(ctx context.Context, provider domain.ProviderConfig, defaultModel string) error {
+	appConfig, err := a.ConfigService.Load(ctx)
+	if err != nil {
+		return err
+	}
+	appConfig = appConfig.UpsertProvider(provider)
+	appConfig.Default.Provider = provider.Name
+	if defaultModel != "" {
+		appConfig.Default.Model = defaultModel
+	}
+	if err := appConfig.Validate(); err != nil {
+		return err
+	}
+	return a.ConfigService.Save(ctx, appConfig)
+}
+
+// SetDefault persiste el proveedor y/o modelo por defecto. Valores vacíos se
+// ignoran (se dejan sin cambiar).
+func (a *App) SetDefault(ctx context.Context, provider, model string) error {
+	appConfig, err := a.ConfigService.Load(ctx)
+	if err != nil {
+		return err
+	}
+	if provider != "" {
+		if _, ok := appConfig.FindProvider(provider); !ok {
+			return fmt.Errorf("proveedor %q no configurado", provider)
+		}
+		appConfig.Default.Provider = provider
+	}
+	if model != "" {
+		appConfig.Default.Model = model
+	}
+	if err := appConfig.Validate(); err != nil {
+		return err
+	}
+	return a.ConfigService.Save(ctx, appConfig)
+}
+
+// ListModelsFor devuelve los modelos disponibles de un proveedor usando su key
+// guardada (listado en vivo); si no hay key o falla, devuelve los modelos de la
+// config como fallback. Nunca puede quedar vacío si la config define modelos.
+func (a *App) ListModelsFor(ctx context.Context, config domain.ProviderConfig) []string {
+	apiKey := a.providerAPIKey(config)
+	if apiKey == "" {
+		return config.Models
+	}
+	models, err := a.ValidateProviderKey(ctx, config, apiKey)
+	if err != nil {
+		return config.Models
+	}
+	if len(models) == 0 {
+		return config.Models
+	}
+	return models
+}
+
+
 // ResolveProvider crea el provider para el modelo configurado.
 func (a *App) ResolveProvider(config domain.AppConfig, model domain.Model) (ports.LLMProvider, error) {
 	providerConfig, ok := config.FindProvider(model.Provider)

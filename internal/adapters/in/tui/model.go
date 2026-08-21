@@ -24,6 +24,10 @@ type transcriptLine struct {
 	text string
 }
 
+// slashHelpText resume los comandos disponibles dentro de la TUI.
+const slashHelpText = `Comandos: /init configura tu proveedor y API key · /help esta ayuda · /quit sale
+Atajos: Enter envía · Tab cambia agente · ? ayuda · PgUp/PgDn desplazan la conversación · Ctrl+C cancela`
+
 // Model es el estado de la TUI.
 type Model struct {
 	app             *apppkg.App
@@ -46,6 +50,11 @@ type Model struct {
 	height          int
 	quitting        bool
 	cancelRun       context.CancelFunc
+	noConfig        bool
+	scrollOffset    int
+	wizard          *wizardModel
+	picker          *pickerModel
+	helpOpen        bool
 }
 
 // Run inicia la TUI en modo pantalla alternativa.
@@ -57,14 +66,17 @@ func Run(app *apppkg.App) error {
 	return err
 }
 
+// newModel construye el estado inicial cargando la configuración. Se construye
+// y devuelve el valor completo, por lo que los mensajes de onboarding persisten
+// (a diferencia de Init(), que solo devuelve el Cmd y descarta mutaciones).
 func newModel(app *apppkg.App) Model {
 	input := textinput.New()
-	input.Placeholder = "Describe tu tarea... (Enter envía, Tab cambia agente, q sale)"
+	input.Placeholder = "Describe tu tarea... (/ para comandos, ? ayuda, Enter envía)"
 	input.Prompt = "❯ "
 	input.Width = 80
 
 	workspace, _ := os.Getwd()
-	return Model{
+	m := Model{
 		app:        app,
 		input:      input,
 		styles:     newStyles(domain.DefaultTheme()),
@@ -72,32 +84,85 @@ func newModel(app *apppkg.App) Model {
 		workspace:  workspace,
 		transcript: make([]transcriptLine, 0, 64),
 	}
+	m.loadConfigInto()
+	return m
 }
 
-// Init implementa tea.Model.
-func (m Model) Init() tea.Cmd {
+// loadConfigInto carga la configuración, detecta si hay un proveedor usable y
+// prepara la barra de estado y el mensaje de onboarding. Los mensajes se anexan
+// al transcript; como se invoca construyendo el modelo (no en Init), persisten.
+func (m *Model) loadConfigInto() {
 	appConfig, err := m.app.LoadConfig(context.Background())
 	if err != nil {
 		m.append("error", fmt.Sprintf("config: %v", err))
-		return nil
+		return
 	}
+	m.applyConfig(appConfig)
+	if m.noConfig {
+		m.append("error", "No hay modelo configurado ni API key disponible.")
+		m.append("notice", "Escribe /init para configurar tu proveedor y API key, o corre 'forgen init'.")
+		m.append("notice", slashHelpText)
+		return
+	}
+	m.append("notice", fmt.Sprintf("forgen — agente %s · modelo %s · cwd %s",
+		m.agentName, m.modelKey, m.workspace))
+}
+
+// applyConfig actualiza agente, tema, modelo por defecto y el flag noConfig
+// sin anexar mensajes (las acciones de picker anexan su propia notificación).
+func (m *Model) applyConfig(appConfig domain.AppConfig) {
 	m.agentName = appConfig.Agent
 	if m.agentName == "" {
 		m.agentName = "build"
 	}
 	m.styles = newStyles(appConfig.Theme)
-	m.modelKey = fmt.Sprintf("%s/%s", appConfig.Default.Provider, appConfig.Default.Model)
-	if appConfig.Default.Provider == "" || appConfig.Default.Model == "" {
-		m.append("error", "No hay modelo configurado. Ejecuta 'forgen auth' o 'forgen init'.")
-	} else {
-		m.append("notice", fmt.Sprintf("forgen — agente %s · modelo %s · cwd %s", m.agentName, m.modelKey, m.workspace))
+	configured := false
+	if appConfig.Default.Provider != "" && appConfig.Default.Model != "" {
+		if provider, ok := appConfig.FindProvider(appConfig.Default.Provider); ok {
+			configured = m.app.HasCredential(provider)
+		}
 	}
+	m.modelKey = fmt.Sprintf("%s/%s", appConfig.Default.Provider, appConfig.Default.Model)
+	m.noConfig = !configured
+}
+
+// refreshFromConfig recarga la config tras un /init completado.
+func (m *Model) refreshFromConfig() {
+	appConfig, err := m.app.LoadConfig(context.Background())
+	if err != nil {
+		m.append("error", fmt.Sprintf("config: %v", err))
+		return
+	}
+	wasUnconfigured := m.noConfig
+	m.applyConfig(appConfig)
+	if wasUnconfigured && !m.noConfig {
+		m.append("notice", fmt.Sprintf("✓ Configuración lista. Modelo por defecto: %s", m.modelKey))
+	}
+}
+
+// Init implementa tea.Model. El setup se hace en newModel para que los mensajes
+// de onboarding no se pierdan (Init solo devuelve un Cmd, no el modelo).
+func (m Model) Init() tea.Cmd {
 	m.input.Focus()
 	return textinput.Blink
 }
 
 // Update implementa tea.Model.
 func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	// Mientras el asistente de configuración está activo, delegamos todas las
+	// entradas (teclado, resize) al wizard.
+	if m.wizard != nil {
+		var cmd tea.Cmd
+		m.wizard, cmd = m.wizard.Update(message)
+		return m, cmd
+	}
+	// Lo mismo para el selector de proveedor/modelo.
+	if m.picker != nil {
+		var cmd tea.Cmd
+		m.picker, cmd = m.picker.Update(message)
+		return m, cmd
+	}
+
 	switch typedMessage := message.(type) {
 	case tea.WindowSizeMsg:
 		m.width = typedMessage.Width
@@ -163,6 +228,36 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.confirmCh = typedMessage.response
 		return m, nil
 
+	case wizardDoneMsg:
+		m.wizard = nil
+		m.refreshFromConfig()
+		return m, nil
+
+	case wizardCancelMsg:
+		m.wizard = nil
+		return m, nil
+
+	case pickerSelectedMsg:
+		m.picker = nil
+		m.applyPickerSelection(typedMessage)
+		return m, nil
+
+	case pickerCancelledMsg:
+		m.picker = nil
+		return m, nil
+
+	case pickerModelsMsg:
+		if typedMessage.err != nil {
+			if m.picker != nil {
+				m.picker.err = "No se pudieron cargar los modelos en vivo; mostrando los de la config."
+			}
+			return m, nil
+		}
+		if m.picker != nil {
+			m.picker.setModels(typedMessage.models)
+		}
+		return m, nil
+
 	case tickMsg:
 		if m.running {
 			m.spinnerIndex = (m.spinnerIndex + 1) % len(spinnerFrames)
@@ -174,6 +269,15 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Overlay de ayuda: consume teclas hasta cerrarlo.
+	if m.helpOpen {
+		switch message.String() {
+		case "esc", "q", "ctrl+c", "?":
+			m.helpOpen = false
+		}
+		return m, nil
+	}
+
 	// Mientras se confirma un permiso, las teclas son respuestas Y/N.
 	if m.confirming {
 		switch message.String() {
@@ -185,6 +289,8 @@ func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.confirming = false
 			m.confirmCh <- false
 			m.append("notice", fmt.Sprintf("Permiso denegado: %s", toolCallLabel(m.confirmCall)))
+		case "?", "h":
+			m.append("notice", permissionDetail(m.confirmCall))
 		}
 		return m, nil
 	}
@@ -217,6 +323,21 @@ func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.quitting = true
 		return m, tea.Quit
 
+	case "?":
+		m.helpOpen = true
+		return m, nil
+
+	case "pgup":
+		m.scrollOffset += m.height - 4
+		return m, nil
+
+	case "pgdown":
+		m.scrollOffset -= m.height - 4
+		if m.scrollOffset < 0 {
+			m.scrollOffset = 0
+		}
+		return m, nil
+
 	case "tab":
 		if m.running {
 			return m, nil
@@ -230,6 +351,14 @@ func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.input.SetValue("")
+		// Comandos tipo slash (/init, /help, /quit).
+		if strings.HasPrefix(prompt, "/") {
+			return m.handleSlash(prompt)
+		}
+		if m.noConfig {
+			m.append("notice", "Configura un proveedor primero: escribe /init")
+			return m, nil
+		}
 		m.append("user", prompt)
 		// Activar el estado de ejecución AQUÍ: startRun recibe m por valor,
 		// así que cualquier mutación interna se descarta. Sin esto el spinner,
@@ -245,6 +374,190 @@ func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var command tea.Cmd
 	m.input, command = m.input.Update(message)
 	return m, command
+}
+
+// handleSlash procesa un comando slash escrito en el campo de entrada.
+func (m Model) handleSlash(command string) (tea.Model, tea.Cmd) {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return m, nil
+	}
+	switch fields[0] {
+	case "/init":
+		m.wizard = newWizardModel(m.app, m.styles, m.width)
+		return m, m.wizard.Init()
+	case "/provider":
+		return m.openProviderPicker()
+	case "/model":
+		return m.openModelPicker()
+	case "/sessions":
+		return m.openSessionsPicker()
+	case "/help", "/?":
+		m.helpOpen = true
+		return m, nil
+	case "/quit", "/exit":
+		m.quitting = true
+		return m, tea.Quit
+	default:
+		m.append("error", fmt.Sprintf("Comando desconocido: %s (prueba /help)", fields[0]))
+	}
+	return m, nil
+}
+
+// openProviderPicker abre el selector de proveedores por defecto.
+func (m Model) openProviderPicker() (tea.Model, tea.Cmd) {
+	appConfig, err := m.app.LoadConfig(context.Background())
+	if err != nil {
+		m.append("error", fmt.Sprintf("Error: %v", err))
+		return m, nil
+	}
+	if len(appConfig.Providers) == 0 {
+		m.append("notice", "No hay proveedores configurados. Usa /init.")
+		return m, nil
+	}
+	items := make([]pickerItem, 0, len(appConfig.Providers))
+	for _, provider := range appConfig.Providers {
+		label := provider.Name
+		if provider.Name == appConfig.Default.Provider {
+			label += " *"
+		}
+		detail := ""
+		if len(provider.Models) > 0 {
+			detail = provider.Models[0]
+		}
+		items = append(items, pickerItem{label: label, detail: detail, value: provider.Name})
+	}
+	m.picker = newPickerModel(pickerProviderKind, "Elige el proveedor por defecto", items, m.styles, m.width, m.height)
+	return m, nil
+}
+
+// openModelPicker abre el selector de modelos del proveedor activo. Muestra los
+// modelos de la config de inmediato y lanza un listado en vivo como respaldo.
+func (m Model) openModelPicker() (tea.Model, tea.Cmd) {
+	appConfig, err := m.app.LoadConfig(context.Background())
+	if err != nil {
+		m.append("error", fmt.Sprintf("Error: %v", err))
+		return m, nil
+	}
+	if appConfig.Default.Provider == "" {
+		m.append("notice", "Configura un proveedor primero: usa /init.")
+		return m, nil
+	}
+	providerConfig, ok := appConfig.FindProvider(appConfig.Default.Provider)
+	if !ok {
+		m.append("error", fmt.Sprintf("Proveedor %q no configurado.", appConfig.Default.Provider))
+		return m, nil
+	}
+	m.picker = m.modelPickerFor(providerConfig)
+	// Listado en vivo de los modelos de la cuenta (si hay key guardada).
+	cfg := providerConfig
+	fetch := func() tea.Msg {
+		return pickerModelsMsg{provider: cfg.Name, models: m.app.ListModelsFor(context.Background(), cfg)}
+	}
+	return m, fetch
+}
+
+// openSessionsPicker abre el selector de sesiones guardadas para retomarlas.
+func (m Model) openSessionsPicker() (tea.Model, tea.Cmd) {
+	sessions, err := m.app.SessionService.List(context.Background(), 20)
+	if err != nil {
+		m.append("error", fmt.Sprintf("Error: %v", err))
+		return m, nil
+	}
+	if len(sessions) == 0 {
+		m.append("notice", "No hay sesiones guardadas todavía.")
+		return m, nil
+	}
+	items := make([]pickerItem, 0, len(sessions))
+	for _, session := range sessions {
+		detail := fmt.Sprintf("%s · %s", session.Agent, session.Model.Key())
+		if summary := session.Summary(); summary != "" {
+			detail += " · " + summary
+		}
+		items = append(items, pickerItem{label: session.ID, detail: detail, value: session.ID})
+	}
+	m.picker = newPickerModel(pickerSessionKind, "Retomar una sesión", items, m.styles, m.width, m.height)
+	return m, nil
+}
+
+// modelPickerFor construye el selector de modelos de un proveedor dado.
+func (m Model) modelPickerFor(providerConfig domain.ProviderConfig) *pickerModel {	items := make([]pickerItem, 0, len(providerConfig.Models))
+	for _, model := range providerConfig.Models {
+		items = append(items, pickerItem{label: model, value: model})
+	}
+	return newPickerModel(pickerModelKind, "Modelo por defecto de "+providerConfig.Name, items, m.styles, m.width, m.height)
+}
+
+// applyPickerSelection aplica el resultado de un picker al config por defecto.
+func (m *Model) applyPickerSelection(selection pickerSelectedMsg) {
+	ctx := context.Background()
+	switch selection.kind {
+	case pickerProviderKind:
+		if err := m.app.SetDefault(ctx, selection.value, ""); err != nil {
+			m.append("error", fmt.Sprintf("Error: %v", err))
+			return
+		}
+		appConfig, err := m.app.LoadConfig(ctx)
+		if err != nil {
+			m.append("error", fmt.Sprintf("Error: %v", err))
+			return
+		}
+		// Dejar un modelo por defecto válido del nuevo proveedor.
+		if provider, ok := appConfig.FindProvider(selection.value); ok && len(provider.Models) > 0 {
+			_ = m.app.SetDefault(ctx, selection.value, provider.Models[0])
+		}
+		m.applyConfig(appConfig)
+		m.append("notice", fmt.Sprintf("Proveedor por defecto: %s", selection.value))
+		// Encadenar al selector de modelos del nuevo proveedor.
+		updated, _ := m.app.LoadConfig(ctx)
+		if provider, ok := updated.FindProvider(selection.value); ok {
+			m.picker = m.modelPickerFor(provider)
+		}
+
+	case pickerModelKind:
+		if err := m.app.SetDefault(ctx, "", selection.value); err != nil {
+			m.append("error", fmt.Sprintf("Error: %v", err))
+			return
+		}
+		appConfig, _ := m.app.LoadConfig(ctx)
+		m.applyConfig(appConfig)
+		m.append("notice", fmt.Sprintf("Modelo por defecto: %s", selection.value))
+
+	case pickerSessionKind:
+		m.sessionID = selection.value
+		appConfig, _ := m.app.LoadConfig(ctx)
+		m.applyConfig(appConfig)
+		m.append("notice", fmt.Sprintf("Sesión %s cargada. Escribe tu prompt para continuar.", selection.value))
+	}
+}
+
+// permissionDetail devuelve una descripción legible y completa de un tool call
+// para mostrarla cuando el usuario pulsa '?' durante un prompt de permiso.
+func permissionDetail(call domain.ToolCall) string {
+	if len(call.Arguments) == 0 {
+		return fmt.Sprintf("Permiso solicitado para: %s", call.Name)
+	}
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "Permiso solicitado para: %s\n", call.Name)
+	keys := make([]string, 0, len(call.Arguments))
+	for key := range call.Arguments {
+		keys = append(keys, key)
+	}
+	// Orden estable para legibilidad.
+	sortStrings(keys)
+	for _, key := range keys {
+		value := call.Arguments[key]
+		fmt.Fprintf(&builder, "  %s = %v\n", key, value)
+	}
+	return strings.TrimRight(builder.String(), "\n")
+}
+
+func sortStrings(items []string) {
+	for i := 1; i < len(items); i++ {
+		for j := i; j > 0 && items[j] < items[j-1]; j-- {
+			items[j], items[j-1] = items[j-1], items[j]
+		}
+	}
 }
 
 // toggleAgent alterna entre build y plan.
@@ -336,6 +649,15 @@ func (m Model) View() string {
 	if m.quitting {
 		return "Hasta la próxima.\n"
 	}
+	if m.wizard != nil {
+		return m.wizard.View()
+	}
+	if m.picker != nil {
+		return m.picker.View()
+	}
+	if m.helpOpen {
+		return m.renderHelp()
+	}
 
 	availableHeight := m.height - 4
 	if availableHeight < 5 {
@@ -348,26 +670,78 @@ func (m Model) View() string {
 	return strings.Join([]string{body, status, inputLine}, "\n")
 }
 
+// renderTranscript dibuja la conversación con word-wrap y scroll (PgUp/PgDn).
+// Sin scroll, solo se muestran las últimas 'limit' líneas envueltas.
 func (m Model) renderTranscript(limit int) string {
-	lines := m.transcript
-	// Añadir el buffer "vivo" del asistente mientras genera, para que el
-	// texto del streaming se vea en tiempo real y la TUI no parezca colgada.
-	if m.assistantBuffer != "" {
-		lines = append(append([]transcriptLine{}, lines...), transcriptLine{kind: "assistant", text: m.assistantBuffer})
-	}
-	if len(lines) == 0 {
+	wrapped := m.wrappedLines()
+
+	if len(wrapped) == 0 {
 		return m.styles.dim.Render(" (sin conversación) ")
 	}
-	start := len(lines) - limit
-	if start < 0 {
-		start = 0
+
+	maxOffset := len(wrapped) - limit
+	if maxOffset < 0 {
+		maxOffset = 0
 	}
-	lines = lines[start:]
-	rendered := make([]string, 0, len(lines))
-	for _, line := range lines {
-		rendered = append(rendered, m.styles.forKind(line.kind).Render(line.text))
+	if m.scrollOffset > maxOffset {
+		m.scrollOffset = maxOffset
 	}
-	return strings.Join(rendered, "\n")
+	if m.scrollOffset < 0 {
+		m.scrollOffset = 0
+	}
+	start := maxOffset - m.scrollOffset
+	visible := wrapped[start:]
+	return strings.Join(visible, "\n")
+}
+
+// wrappedLines devuelve el transcript con cada línea envuelta al ancho y añade
+// el buffer "vivo" del asistente para que el streaming se vea en tiempo real.
+func (m Model) wrappedLines() []string {
+	width := m.width - 2
+	if width < 20 {
+		width = 80
+	}
+	var lines []string
+	for _, line := range m.transcript {
+		lines = append(lines, m.wrap(width, line.kind, line.text)...)
+	}
+	if m.assistantBuffer != "" {
+		lines = append(lines, m.wrap(width, "assistant", m.assistantBuffer)...)
+	}
+	return lines
+}
+
+func (m Model) wrap(width int, kind, text string) []string {
+	styled := m.styles.forKind(kind).MaxWidth(width).Render(text)
+	return strings.Split(styled, "\n")
+}
+
+// renderHelp muestra el overlay de ayuda en pantalla completa.
+func (m Model) renderHelp() string {
+	lines := []string{
+		m.styles.accent.Render("forgen — ayuda rápida"),
+		"",
+		"Comandos slash (escribe / y Enter en el campo):",
+		"  /init       Configura tu proveedor y API key",
+		"  /provider   Cambia el proveedor por defecto",
+		"  /model      Elige el modelo por defecto (listado en vivo)",
+		"  /sessions   Retoma una sesión guardada",
+		"  /help, /?   Muestra esta ayuda",
+		"  /quit, /exit  Sale de forgen",
+		"",
+		"Atajos de teclado:",
+		"  Enter       Envía el mensaje",
+		"  Tab         Cambia agente (build ↔ plan)",
+		"  ?           Abre esta ayuda",
+		"  PgUp/PgDn   Desplazan la conversación",
+		"  Ctrl+C      Cancela la petición en curso / sale",
+		"",
+		"Consejo: la primera vez escribe /init para conectar tu proveedor favorito",
+		"(OpenAI, Anthropic, OpenRouter, Groq, Ollama y más). Solo necesitas tu API key.",
+		"",
+		m.styles.dim.Render("(Esc o q para cerrar)"),
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m Model) renderStatus() string {
@@ -384,9 +758,11 @@ func (m Model) renderStatus() string {
 	}
 	right := ""
 	if m.confirming {
-		right = m.styles.notice.Render(fmt.Sprintf("¿Permitir %s? (y/n)", toolCallLabel(m.confirmCall)))
+		right = m.styles.notice.Render(fmt.Sprintf("¿Permitir %s? (y/n, ? ver detalle)", toolCallLabel(m.confirmCall)))
 	} else if m.running {
 		right = m.styles.dim.Render("trabajando...")
+	} else if m.noConfig {
+		right = m.styles.notice.Render("sin configurar — escribe /init")
 	}
 	if m.width > 0 {
 		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
@@ -400,7 +776,7 @@ func (m Model) renderStatus() string {
 
 func (m Model) renderInput() string {
 	if m.confirming {
-		return m.styles.notice.Render(fmt.Sprintf("❯ ¿Permitir ejecutar %s? [y/N]", toolCallLabel(m.confirmCall)))
+		return m.styles.notice.Render(fmt.Sprintf("❯ ¿Permitir ejecutar %s? [y/N, ? detalle]", toolCallLabel(m.confirmCall)))
 	}
 	return m.input.View()
 }

@@ -67,6 +67,12 @@ func runAsk(ctx context.Context, app *apppkg.App, options *askOptions) error {
 	if err != nil {
 		return err
 	}
+	// Chequeo pre-vuelo: si el proveedor del modelo no tiene API key, avisar de
+	// forma clara en vez de fallar con un error de autenticación críptico.
+	if providerConfig, ok := appConfig.FindProvider(model.Provider); ok && !app.HasCredential(providerConfig) {
+		return fmt.Errorf("no hay API key disponible para %q; ejecuta 'forgen auth %s' o 'forgen init'",
+			model.Provider, model.Provider)
+	}
 	agentDef, err := app.SelectedAgent(appConfig, options.Agent)
 	if err != nil {
 		return err

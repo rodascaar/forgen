@@ -26,6 +26,11 @@ forgen auth          # guarda tu API key y detecta los modelos de tu cuenta
 forgen doctor        # diagnóstico del entorno
 ```
 
+También puedes configurarlo desde la propia TUI: al abrir `forgen` sin
+configurar, verás una guía que te lleva a `/init`, un asistente que te deja
+elegir tu proveedor, pegar tu API key (enmascarada) y validarla, todo sin salir
+del programa.
+
 `forgen auth` (o `forgen provider add <proveedor>`) te deja configurar un
 proveedor conocido escribiendo **solo tu API key**: forgen consulta el endpoint
 de listado del proveedor y guarda automáticamente los modelos disponibles para
@@ -83,6 +88,22 @@ forgen provider list                # proveedores configurados + presets
 forgen provider add <proveedor>     # añade un proveedor conocido
 forgen provider remove <proveedor>  # elimina un proveedor y su credencial
 ```
+
+### Dentro de la TUI (slash commands)
+
+Sin salir de la interfaz interactiva puedes gestionar todo con comandos `/`:
+
+| Comando | Acción |
+|---------|--------|
+| `/init` | Asistente: elige proveedor, pega tu API key y valida |
+| `/provider` | Cambia el proveedor por defecto (selector) |
+| `/model` | Elige el modelo por defecto (listado en vivo) |
+| `/sessions` | Retoma una sesión guardada |
+| `/help` o `/?` | Muestra la ayuda (también con la tecla `?`) |
+| `/quit` o `/exit` | Sale de forgen |
+
+**Atajos**: `Enter` envía · `Tab` cambia agente (build↔plan) · `?` ayuda ·
+`PgUp/PgDn` desplazan la conversación · `Ctrl+C` cancela la petición / sale.
 
 ## Proveedores sin lock-in
 

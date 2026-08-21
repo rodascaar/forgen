@@ -107,7 +107,7 @@ func runAuth(ctx context.Context, app *apppkg.App, providerName string, in io.Re
 	}
 
 	// Validar contra el proveedor y detectar modelos disponibles del usuario.
-	models, err := listModelsForProvider(ctx, app, base, secret)
+	models, err := app.ValidateProviderKey(ctx, base, secret)
 	if err != nil {
 		return fmt.Errorf("no se pudo validar la key contra el proveedor: %w", err)
 	}
@@ -121,18 +121,14 @@ func runAuth(ctx context.Context, app *apppkg.App, providerName string, in io.Re
 	// Persistir metadata del proveedor con los modelos detectados.
 	providerConfig = base
 	providerConfig.Models = models
-	config = upsertProvider(config, providerConfig)
-	config.Default.Provider = providerConfig.Name
+	defaultModel := ""
 	if len(models) > 0 {
-		config.Default.Model = models[0]
+		defaultModel = models[0]
 	} else if len(providerConfig.Models) > 0 {
-		config.Default.Model = providerConfig.Models[0]
+		defaultModel = providerConfig.Models[0]
 	}
-	if err := config.Validate(); err != nil {
-		return fmt.Errorf("configuración resultante inválida: %w", err)
-	}
-	if err := app.ConfigService.Save(ctx, config); err != nil {
-		return err
+	if err := app.AddProvider(ctx, providerConfig, defaultModel); err != nil {
+		return fmt.Errorf("guardar configuración: %w", err)
 	}
 
 	_, _ = fmt.Fprintf(out, "\nModelos guardados para %s (%d):\n", providerConfig.Name, len(models))
@@ -141,36 +137,6 @@ func runAuth(ctx context.Context, app *apppkg.App, providerName string, in io.Re
 	}
 	_, _ = fmt.Fprintln(out, "\nListo. La API key se guardó en el almacén seguro del sistema.")
 	return nil
-}
-
-// listModelsForProvider construye el provider con la key dada y consulta sus modelos.
-func listModelsForProvider(ctx context.Context, app *apppkg.App, config domain.ProviderConfig, apiKey string) ([]string, error) {
-	provider, err := app.LLMFactory.CreateWithKeyResolver(config, func(domain.ProviderConfig) string {
-		return apiKey
-	}, nil)
-	if err != nil {
-		return nil, err
-	}
-	models, err := provider.ListModels(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if len(models) == 0 {
-		return config.Models, nil
-	}
-	return models, nil
-}
-
-// upsertProvider añade o reemplaza un proveedor en la configuración.
-func upsertProvider(config domain.AppConfig, provider domain.ProviderConfig) domain.AppConfig {
-	for index := range config.Providers {
-		if config.Providers[index].Name == provider.Name {
-			config.Providers[index] = provider
-			return config
-		}
-	}
-	config.Providers = append(config.Providers, provider)
-	return config
 }
 
 func runProviderList(ctx context.Context, app *apppkg.App) error {

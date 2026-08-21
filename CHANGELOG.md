@@ -29,4 +29,23 @@ el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 
 ## [No liberado]
 
+### Añadido
+
+- **UX de la TUI**: slash commands dentro de la interfaz interactiva (`/init`,
+  `/provider`, `/model`, `/sessions`, `/help`, `/quit`), overlay de ayuda con
+  `?`, word-wrap y scroll con `PgUp/PgDn`.
+- **Onboarding guiado**: detección de primer uso con banner accionable y
+  asistente `/init` que configura proveedor + API key sin salir del programa.
+- **Selector de proveedor/modelo** (`/provider`, `/model`) con listado en vivo
+  de los modelos de tu cuenta (estilo opencode/fx).
+
+### Corregido
+
+- **Pantalla en blanco al primer arranque**: los mensajes de onboarding que
+  `Init()` descartaba por receiver por valor ahora persisten.
+- **Prompt de permisos**: la tecla `?` muestra el comando completo antes de
+  aprobar/denegar.
+- **`forgen ask`**: avisa de forma clara cuando falta la API key en vez de
+  fallar con un error de autenticación críptico.
+
 [0.1.0]: https://github.com/rodascaar/forgen/releases/tag/v0.1.0

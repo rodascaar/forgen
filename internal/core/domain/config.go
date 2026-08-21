@@ -129,6 +129,18 @@ func DefaultAppConfig() AppConfig {
 	}
 }
 
+// UpsertProvider añade o reemplaza un proveedor y devuelve la config resultante.
+func (c AppConfig) UpsertProvider(provider ProviderConfig) AppConfig {
+	for i := range c.Providers {
+		if c.Providers[i].Name == provider.Name {
+			c.Providers[i] = provider
+			return c
+		}
+	}
+	c.Providers = append(c.Providers, provider)
+	return c
+}
+
 // FindProvider localiza un proveedor por nombre.
 func (c AppConfig) FindProvider(name string) (ProviderConfig, bool) {
 	for _, provider := range c.Providers {
