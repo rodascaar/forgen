@@ -67,6 +67,23 @@ func TestSearchRespectsInclude(t *testing.T) {
 	}
 }
 
+func TestSearchIncludeMatchesRootAndNested(t *testing.T) {
+	// Cubre el bug de Windows: doublestar.Match usa "/" como separador
+	// incluso cuando filepath.Separator es "\".
+	fileSystem := fs.New(t.TempDir())
+	_ = fileSystem.Write(context.Background(), "b.txt", []byte("target"))
+	_ = fileSystem.Write(context.Background(), "src/c.txt", []byte("target"))
+	_ = fileSystem.Write(context.Background(), "a.go", []byte("target"))
+
+	matches, err := fileSystem.Search(context.Background(), ".", "target", "*.txt")
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("matches = %d, want 2 (b.txt y src/c.txt)", len(matches))
+	}
+}
+
 func TestSearchSkipsIgnoredDirs(t *testing.T) {
 	fileSystem := fs.New(t.TempDir())
 	_ = fileSystem.Write(context.Background(), "node_modules/dep.js", []byte("target"))

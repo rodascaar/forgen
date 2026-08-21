@@ -126,7 +126,10 @@ func (o *OSFileSystem) Search(_ context.Context, root, query, include string) ([
 			if !strings.ContainsAny(include, "/\\") {
 				includePattern = "**/" + include
 			}
-			matched, matchErr := doublestar.PathMatch(includePattern, rel)
+			// doublestar.Match siempre usa "/" como separador (a diferencia de
+			// PathMatch, que usa filepath.Separator = "\" en Windows). Como rel
+			// ya está normalizado a "/", Match funciona en todas las plataformas.
+			matched, matchErr := doublestar.Match(includePattern, rel)
 			if matchErr != nil || !matched {
 				return nil
 			}
