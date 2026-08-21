@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 
 	"github.com/rodascaar/forgen/internal/adapters/out/llm"
@@ -83,3 +84,37 @@ func TestValidateProviderKeyFallsBackToConfig(t *testing.T) {
 type discard struct{}
 
 func (discard) Write(p []byte) (int, error) { return len(p), nil }
+
+func TestProviderUsable(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("FORGEN_CONFIG_DIR", filepath.Join(dir, "config"))
+	t.Setenv("FORGEN_DATA_DIR", filepath.Join(dir, "data"))
+	logger := slog.New(slog.NewTextHandler(discard{}, nil))
+	app, err := NewApp(logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(app.Close)
+
+	// Ollama local sin key debe ser usable (no requiere API key).
+	ollama := domain.ProviderConfig{
+		Name:    "ollama",
+		Type:    domain.ProviderTypeOpenAICompatible,
+		BaseURL: "http://localhost:11434/v1",
+		APIKeyEnv: "",
+	}
+	if !app.ProviderUsable(ollama) {
+		t.Fatal("ollama local sin key debería ser usable")
+	}
+
+	// Proveedor remoto sin key no debe ser usable.
+	remote := domain.ProviderConfig{
+		Name:    "openai",
+		Type:    domain.ProviderTypeOpenAICompatible,
+		BaseURL: "https://api.openai.com/v1",
+		APIKeyEnv: "FORGEN_TEST_NO_SUCH_KEY_XYZ",
+	}
+	if app.ProviderUsable(remote) {
+		t.Fatal("proveedor remoto sin key no debería ser usable")
+	}
+}

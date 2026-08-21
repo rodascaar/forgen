@@ -53,5 +53,16 @@ el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 - **`forgen ask`**: avisa de forma clara cuando falta la API key en vez de
   fallar con un error de autenticación críptico.
 - **Ruido del Tab**: cambiar de agente ya no llena el transcript con avisos.
+- **Congelamiento de la TUI al confirmar en `/init`, `/provider`, `/model` y
+  `/sessions`**: los mensajes que cierran el asistente/selector se delegaban al
+  propio sub-modelo y se tragaban, dejando la UI sin salida; ahora se procesan
+  antes de delegar.
+- **Modal de permisos atascado**: si la petición terminaba o fallaba con un
+  permiso pendiente, la UI quedaba en "¿Permitir...?" sin poder escribir; ahora
+  el estado de confirmación se resetea al finalizar la petición.
+- **Proveedores locales sin API key (Ollama)**: ya no se marcan como "sin
+  configurar"; se consideran usables si el endpoint es local.
+- **Validación/listado de modelos con timeout (15s)**: el paso "Validando..." y
+  el listado en vivo de `/model` no se quedan colgados si el proveedor tarda.
 
 [0.1.0]: https://github.com/rodascaar/forgen/releases/tag/v0.1.0

@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 
@@ -259,6 +260,27 @@ func (a *App) ValidateProviderKey(ctx context.Context, config domain.ProviderCon
 // (almacén seguro o variable de entorno). Usado para detectar primer uso.
 func (a *App) HasCredential(config domain.ProviderConfig) bool {
 	return a.providerAPIKey(config) != ""
+}
+
+// ProviderUsable devuelve true si el proveedor está listo para usar: tiene una
+// API key disponible o es un endpoint local (p. ej. Ollama) que no la requiere.
+func (a *App) ProviderUsable(config domain.ProviderConfig) bool {
+	if a.HasCredential(config) {
+		return true
+	}
+	return isLocalEndpoint(config.BaseURL)
+}
+
+func isLocalEndpoint(baseURL string) bool {
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return false
+	}
+	switch parsed.Hostname() {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	}
+	return false
 }
 
 // AddProvider hace upsert del proveedor, lo deja como default y persiste.

@@ -153,9 +153,12 @@ func (w *wizardModel) handleKey(message tea.KeyMsg) (*wizardModel, tea.Cmd) {
 	return w, nil
 }
 
-// validate consulta los modelos del proveedor con la key dada (async).
+// validate consulta los modelos del proveedor con la key dada (async, con
+// timeout para que la validación nunca parezca colgada).
 func (w *wizardModel) validate(ctx context.Context, cfg domain.ProviderConfig, apiKey string) tea.Cmd {
+	ctx, cancel := context.WithTimeout(ctx, modelListTimeout)
 	return func() tea.Msg {
+		defer cancel()
 		models, err := w.app.ValidateProviderKey(ctx, cfg, apiKey)
 		return wizardKeyValidatedMsg{provider: cfg, models: models, err: err}
 	}

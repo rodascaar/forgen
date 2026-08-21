@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -39,6 +40,86 @@ func TestTypingAppendsToFocusedInput(t *testing.T) {
 	}
 	if got := mm.input.Value(); got != "hola" {
 		t.Fatalf("al escribir, input=%q, quiero %q", got, "hola")
+	}
+}
+
+// testApp construye una App aislada en directorios temporales.
+func testApp(t *testing.T) *apppkg.App {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("FORGEN_CONFIG_DIR", filepath.Join(dir, "config"))
+	t.Setenv("FORGEN_DATA_DIR", filepath.Join(dir, "data"))
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	app, err := apppkg.NewApp(logger)
+	if err != nil {
+		t.Fatalf("NewApp: %v", err)
+	}
+	t.Cleanup(app.Close)
+	return app
+}
+
+// TestWizardDoneClosesSubModel: regresión de la congelación de /init. El
+// mensaje que cierra el wizard no debe delegarse al propio wizard (se tragaba).
+func TestWizardDoneClosesSubModel(t *testing.T) {
+	m := newModel(testApp(t))
+	m.wizard = newWizardModel(m.app, m.styles, 80)
+
+	updated, _ := m.Update(wizardDoneMsg{})
+	mm, ok := updated.(Model)
+	if !ok {
+		t.Fatalf("modelo inesperado: %T", updated)
+	}
+	if mm.wizard != nil {
+		t.Fatal("wizardDoneMsg debería cerrar el wizard")
+	}
+	if !mm.input.Focused() {
+		t.Fatal("tras cerrar el wizard, el input debería seguir enfocado")
+	}
+}
+
+// TestPickerSelectionClosesSubModel: los selectores (/provider, /model,
+// /sessions) también se congelaban por el mismo motivo.
+func TestPickerSelectionClosesSubModel(t *testing.T) {
+	m := newModel(testApp(t))
+	m.picker = newPickerModel(pickerProviderKind, "t", []pickerItem{{label: "a", value: "a"}}, m.styles, 80, 24)
+
+	updated, _ := m.Update(pickerCancelledMsg{})
+	if mm, ok := updated.(Model); !ok || mm.picker != nil {
+		t.Fatal("pickerCancelledMsg debería cerrar el picker")
+	}
+
+	m.picker = newPickerModel(pickerModelKind, "t", []pickerItem{{label: "gpt-5", value: "gpt-5"}}, m.styles, 80, 24)
+	updated, _ = m.Update(pickerSelectedMsg{kind: pickerModelKind, value: "gpt-5"})
+	if mm, ok := updated.(Model); !ok || mm.picker != nil {
+		t.Fatal("pickerSelectedMsg debería cerrar el picker")
+	}
+}
+
+// TestConfirmResetOnRunEnd: si la petición termina/falla con un permiso
+// pendiente, el modal Y/N no debe quedar atascado (antes no se podía escribir).
+func TestConfirmResetOnRunEnd(t *testing.T) {
+	m := newModel(testApp(t))
+	m.confirming = true
+	m.confirmCh = make(chan bool, 1)
+	m.running = true
+
+	updated, _ := m.Update(runDoneMsg{err: errors.New("boom")})
+	mm, ok := updated.(Model)
+	if !ok {
+		t.Fatalf("modelo inesperado: %T", updated)
+	}
+	if mm.confirming {
+		t.Fatal("runDoneMsg con error debería resetear el estado de confirmación")
+	}
+	if mm.running {
+		t.Fatal("runDoneMsg debería marcar running=false")
+	}
+
+	// errorMsg también debe resetear el modal.
+	m.confirming = true
+	updated, _ = m.Update(errorMsg{err: errors.New("boom")})
+	if mm, ok := updated.(Model); !ok || mm.confirming {
+		t.Fatal("errorMsg debería resetear el estado de confirmación")
 	}
 }
 

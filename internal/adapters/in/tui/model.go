@@ -18,6 +18,10 @@ import (
 // spinnerFrames son los estados del indicador de actividad.
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
+// modelListTimeout acota la validación/listado de modelos del wizard y /model
+// para que la UI nunca parezca congelada si el proveedor tarda.
+const modelListTimeout = 15 * time.Second
+
 // transcriptLine es una línea renderizada de la conversación.
 type transcriptLine struct {
 	kind string
@@ -123,7 +127,7 @@ func (m *Model) applyConfig(appConfig domain.AppConfig) {
 	configured := false
 	if appConfig.Default.Provider != "" && appConfig.Default.Model != "" {
 		if provider, ok := appConfig.FindProvider(appConfig.Default.Provider); ok {
-			configured = m.app.HasCredential(provider)
+			configured = m.app.ProviderUsable(provider)
 		}
 	}
 	m.modelKey = fmt.Sprintf("%s/%s", appConfig.Default.Provider, appConfig.Default.Model)
@@ -152,14 +156,48 @@ func (m Model) Init() tea.Cmd {
 
 // Update implementa tea.Model.
 func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
-	// Mientras el asistente de configuración está activo, delegamos todas las
-	// entradas (teclado, resize) al wizard.
+	// Mensajes que cierran/afectan a un sub-modelo (wizard/picker) se procesan
+	// ANTES de delegar: si se delegaran, el sub-modelo los tragaría y el
+	// asistente/selector nunca se cerraría (la UI se congelaba).
+	switch typedMessage := message.(type) {
+	case wizardDoneMsg:
+		m.wizard = nil
+		m.refreshFromConfig()
+		return m, nil
+
+	case wizardCancelMsg:
+		m.wizard = nil
+		return m, nil
+
+	case pickerSelectedMsg:
+		m.picker = nil
+		m.applyPickerSelection(typedMessage)
+		return m, nil
+
+	case pickerCancelledMsg:
+		m.picker = nil
+		return m, nil
+
+	case pickerModelsMsg:
+		if typedMessage.err != nil {
+			if m.picker != nil {
+				m.picker.err = "No se pudieron cargar los modelos en vivo; mostrando los de la config."
+			}
+			return m, nil
+		}
+		if m.picker != nil {
+			m.picker.setModels(typedMessage.models)
+		}
+		return m, nil
+	}
+
+	// Mientras un sub-modelo está activo, delegamos el resto de mensajes
+	// (teclado, resize, resultado de validación).
 	if m.wizard != nil {
 		var cmd tea.Cmd
 		m.wizard, cmd = m.wizard.Update(message)
 		return m, cmd
 	}
-	// Lo mismo para el selector de proveedor/modelo.
 	if m.picker != nil {
 		var cmd tea.Cmd
 		m.picker, cmd = m.picker.Update(message)
@@ -201,11 +239,13 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case errorMsg:
 		m.flushAssistant()
 		m.append("error", fmt.Sprintf("Error: %v", typedMessage.err))
+		m.resetConfirm()
 		m.running = false
 		return m, nil
 
 	case finishedMsg:
 		m.flushAssistant()
+		m.resetConfirm()
 		m.running = false
 		return m, nil
 
@@ -222,6 +262,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if typedMessage.phase != "" {
 			m.phase = typedMessage.phase
 		}
+		m.resetConfirm()
 		m.running = false
 		return m, nil
 
@@ -229,36 +270,6 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.confirming = true
 		m.confirmCall = typedMessage.call
 		m.confirmCh = typedMessage.response
-		return m, nil
-
-	case wizardDoneMsg:
-		m.wizard = nil
-		m.refreshFromConfig()
-		return m, nil
-
-	case wizardCancelMsg:
-		m.wizard = nil
-		return m, nil
-
-	case pickerSelectedMsg:
-		m.picker = nil
-		m.applyPickerSelection(typedMessage)
-		return m, nil
-
-	case pickerCancelledMsg:
-		m.picker = nil
-		return m, nil
-
-	case pickerModelsMsg:
-		if typedMessage.err != nil {
-			if m.picker != nil {
-				m.picker.err = "No se pudieron cargar los modelos en vivo; mostrando los de la config."
-			}
-			return m, nil
-		}
-		if m.picker != nil {
-			m.picker.setModels(typedMessage.models)
-		}
 		return m, nil
 
 	case tickMsg:
@@ -269,6 +280,14 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+// resetConfirm limpia el estado del prompt de permiso. Se invoca al terminar o
+// fallar una petición para que la UI nunca quede atascada en el modal Y/N.
+func (m *Model) resetConfirm() {
+	m.confirming = false
+	m.confirmCall = domain.ToolCall{}
+	m.confirmCh = nil
 }
 
 func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -455,7 +474,9 @@ func (m Model) openModelPicker() (tea.Model, tea.Cmd) {
 	// Listado en vivo de los modelos de la cuenta (si hay key guardada).
 	cfg := providerConfig
 	fetch := func() tea.Msg {
-		return pickerModelsMsg{provider: cfg.Name, models: m.app.ListModelsFor(context.Background(), cfg)}
+		ctx, cancel := context.WithTimeout(context.Background(), modelListTimeout)
+		defer cancel()
+		return pickerModelsMsg{provider: cfg.Name, models: m.app.ListModelsFor(ctx, cfg)}
 	}
 	return m, fetch
 }
