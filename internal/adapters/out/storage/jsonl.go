@@ -2,6 +2,7 @@
 package storage
 
 import (
+	"sync"
 	"bufio"
 	"bytes"
 	"context"
@@ -58,8 +59,14 @@ const (
 )
 
 // JSONLStore persiste sesiones como archivos append-only por sesión.
+// JSONLStore persiste sesiones como archivos append-only por sesión.
+// JSONLStore persiste sesiones como archivos append-only por sesión.
+// JSONLStore persiste sesiones como archivos append-only por sesión.
+// JSONLStore persiste sesiones como archivos append-only por sesión.
 type JSONLStore struct {
-	dir string
+	 dir string
+	 mu      sync.Mutex
+	 closed  bool
 }
 
 // NewJSONLStore crea el store y garantiza que el directorio exista.
@@ -72,6 +79,11 @@ func NewJSONLStore(dir string) (*JSONLStore, error) {
 
 // Save implementa ports.SessionStore.
 func (s *JSONLStore) Save(_ context.Context, session domain.Session) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return fmt.Errorf("store is closed")
+	}
 	path := s.filePath(session.ID)
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return s.create(session, path)
@@ -79,6 +91,13 @@ func (s *JSONLStore) Save(_ context.Context, session domain.Session) error {
 	return s.rewrite(session, path)
 }
 
+// Close cierra el store y libera recursos.
+func (s *JSONLStore) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
+	return nil
+}
 func (s *JSONLStore) filePath(id string) string {
 	return filepath.Join(s.dir, id+sessionFileExt)
 }
