@@ -536,6 +536,37 @@ func (m Model) handleSlash(command string) (tea.Model, tea.Cmd) {
 			m.append("notice", "Diff para commit:\n"+diff[:min(2000, len(diff))])
 		}
 		return m, nil
+	case "/review":
+		m.append("notice", "Iniciando review — delegando a sub-agente review…")
+		ctx, cancel := context.WithCancel(context.Background())
+		m.running = true
+		m.assistantBuffer = ""
+		m.cancelRun = cancel
+		return m, m.startRun(ctx, "Haz un code review del diff actual: busca bugs, seguridad, estilo y sugiere mejoras")
+	case "/pr":
+		m.append("notice", "Creando PR — ejecuta 'gh pr create' o 'git push && gh pr create'")
+		return m, nil
+	case "/test":
+		m.append("notice", "Ejecutando tests…")
+		ctx2, cancel2 := context.WithCancel(context.Background())
+		m.running = true
+		m.assistantBuffer = ""
+		m.cancelRun = cancel2
+		return m, m.startRun(ctx2, "Ejecuta los tests relevantes (go test ./... -run <relacionado> o npm test) y reporta fallos")
+	case "/lint":
+		m.append("notice", "Ejecutando linters…")
+		ctx3, cancel3 := context.WithCancel(context.Background())
+		m.running = true
+		m.assistantBuffer = ""
+		m.cancelRun = cancel3
+		return m, m.startRun(ctx3, "Ejecuta golangci-lint run ./... (o el linter configurado) y reporta issues")
+	case "/fix":
+		m.append("notice", "Auto-fix — delegando a sub-agente build…")
+		ctx4, cancel4 := context.WithCancel(context.Background())
+		m.running = true
+		m.assistantBuffer = ""
+		m.cancelRun = cancel4
+		return m, m.startRun(ctx4, "Corrige automáticamente los errores de lint/test y valida con go vet")
 	case "/help", "/?":
 		m.helpOpen = true
 		return m, nil
@@ -903,6 +934,11 @@ func (m Model) renderHelp() string {
 		"  /task       Lista sub-agentes",
 		"  /diff       Muestra diff del working tree",
 		"  /commit     Muestra diff para commit",
+		"  /review     Code review del diff (sub-agente)",
+		"  /test       Ejecuta tests relevantes",
+		"  /lint       Ejecuta linters",
+		"  /fix        Auto-fix lint/test",
+		"  /pr         Crear PR (gh pr create)",
 		"  /help, /?   Muestra esta ayuda",
 		"  /quit, /exit  Sale de forgen",
 		"",

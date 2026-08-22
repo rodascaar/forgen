@@ -2,7 +2,7 @@
 
 > Fuente de verdad para no olvidar funcionalidades. Actualizado tras cada fase.
 
-## Estado: v0.1.3 + Fases 1.1-1.3-2.1-2.2 en main
+## Estado: v0.1.3 + Fases 1.1-1.3-2.1-2.2-4.1 en main
 
 ### FASE 0 — Base Sólida ✅
 - [x] Fix crash nil-pointer (tea.NewProgram &model)
@@ -56,7 +56,7 @@
 - [ ] Vision
 
 ### FASE 4 — Ecosystem
-- [x] Slash /diff, /commit (resto: /review, /pr, /test, /lint, /fix pendiente)
+- [x] Slash /diff, /commit, /review, /test, /lint, /fix, /pr
 - [ ] Notebook support
 - [ ] VS Code ext, MCP Registry, Plugin System
 - [ ] CI/CD SBOM/Cosign
