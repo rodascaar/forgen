@@ -187,6 +187,82 @@ func (c *Client) Rename(ctx context.Context, path string, line, column int, newN
 	return c.applyWorkspaceEdit(result)
 }
 
+func (c *Client) Implementation(ctx context.Context, path string, line, column int) ([]ports.LSPLocation, error) {
+	if err := c.openDocument(ctx, path); err != nil {
+		return nil, err
+	}
+	params := map[string]any{"textDocument": map[string]any{"uri": pathToURI(path)}, "position": positionParams(line, column)}
+	result, err := c.transport.call(ctx, "textDocument/implementation", params)
+	if err != nil {
+		return nil, err
+	}
+	return parseLocations(result), nil
+}
+
+func (c *Client) TypeDefinition(ctx context.Context, path string, line, column int) ([]ports.LSPLocation, error) {
+	if err := c.openDocument(ctx, path); err != nil {
+		return nil, err
+	}
+	params := map[string]any{"textDocument": map[string]any{"uri": pathToURI(path)}, "position": positionParams(line, column)}
+	result, err := c.transport.call(ctx, "textDocument/typeDefinition", params)
+	if err != nil {
+		return nil, err
+	}
+	return parseLocations(result), nil
+}
+
+func (c *Client) DocumentSymbols(ctx context.Context, path string) (string, error) {
+	if err := c.openDocument(ctx, path); err != nil {
+		return "", err
+	}
+	params := map[string]any{"textDocument": map[string]any{"uri": pathToURI(path)}}
+	result, err := c.transport.call(ctx, "textDocument/documentSymbol", params)
+	if err != nil {
+		return "", err
+	}
+	return string(result), nil
+}
+
+func (c *Client) WorkspaceSymbols(ctx context.Context, query string) (string, error) {
+	params := map[string]any{"query": query}
+	result, err := c.transport.call(ctx, "workspace/symbol", params)
+	if err != nil {
+		return "", err
+	}
+	return string(result), nil
+}
+
+func (c *Client) CodeAction(ctx context.Context, path string, startLine, startCol, endLine, endCol int) (string, error) {
+	if err := c.openDocument(ctx, path); err != nil {
+		return "", err
+	}
+	params := map[string]any{
+		"textDocument": map[string]any{"uri": pathToURI(path)},
+		"range": map[string]any{
+			"start": map[string]any{"line": startLine - 1, "character": startCol - 1},
+			"end":   map[string]any{"line": endLine - 1, "character": endCol - 1},
+		},
+		"context": map[string]any{"diagnostics": []any{}},
+	}
+	result, err := c.transport.call(ctx, "textDocument/codeAction", params)
+	if err != nil {
+		return "", err
+	}
+	return string(result), nil
+}
+
+func (c *Client) Completion(ctx context.Context, path string, line, column int) (string, error) {
+	if err := c.openDocument(ctx, path); err != nil {
+		return "", err
+	}
+	params := map[string]any{"textDocument": map[string]any{"uri": pathToURI(path)}, "position": positionParams(line, column)}
+	result, err := c.transport.call(ctx, "textDocument/completion", params)
+	if err != nil {
+		return "", err
+	}
+	return string(result), nil
+}
+
 // applyWorkspaceEdit aplica el map changes (uri -> textEdits) al filesystem.
 func (c *Client) applyWorkspaceEdit(result json.RawMessage) error {
 	var edit struct {

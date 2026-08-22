@@ -49,6 +49,7 @@ type App struct {
 	TodoStore       ports.TodoStore
 	TaskStore       ports.TaskStore
 	TaskExecutor    ports.TaskExecutor
+	Git             ports.Git
 	UsageService    *usage.Service
 	ToolRegistry    *tools.Registry
 	FileSystem      ports.FileSystem
@@ -169,6 +170,7 @@ func NewApp(logger *slog.Logger) (*App, error) {
 		TodoStore:      todoStore,
 		TaskStore:      taskStore,
 		TaskExecutor:   taskExecutor,
+		Git:            gitCLI,
 		ToolRegistry:   registry,
 		FileSystem:     fileSystem,
 		Language:       language.NewDetector(),

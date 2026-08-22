@@ -52,6 +52,7 @@ type Model struct {
 	spinnerIndex    int
 	showTodo        bool
 	todoList        *domain.TodoList
+	todoCursor      int
 	width           int
 	height          int
 	quitting        bool
@@ -181,7 +182,11 @@ func (m Model) renderTodoOverlay() string {
 			case domain.TodoStatusCancelled:
 				icon = "✗"
 			}
-			line := fmt.Sprintf("%d. %s %s", i+1, icon, t.Content)
+			marker := "  "
+			if i == m.todoCursor {
+				marker = "▸ "
+			}
+			line := fmt.Sprintf("%s%d. %s %s", marker, i+1, icon, t.Content)
 			if t.Status == domain.TodoStatusInProgress && t.ActiveForm != "" {
 				line += " — " + t.ActiveForm
 			}
@@ -192,10 +197,15 @@ func (m Model) renderTodoOverlay() string {
 			case domain.TodoStatusDone:
 				style = m.styles.toolDone
 			}
-			b.WriteString(style.Render(line) + "\n")
+			if i == m.todoCursor {
+				line = m.styles.accent.Render(line)
+			} else {
+				line = style.Render(line)
+			}
+			b.WriteString(line + "\n")
 		}
 	}
-	b.WriteString("\n" + m.styles.dim.Render("(Esc/q para cerrar · /todo en CLI para gestionar)"))
+	b.WriteString("\n" + m.styles.dim.Render("(↑/↓ mover · Enter/x toggle · d borrar · Esc/q cerrar)"))
 	return b.String()
 }
 
@@ -342,11 +352,39 @@ func (m *Model) resetConfirm() {
 }
 
 func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Overlay de todo/ayuda: consume teclas hasta cerrarlo.
+		// Overlay de todo: navegación y toggle
 	if m.showTodo {
 		switch message.String() {
 		case "esc", "q", "ctrl+c":
 			m.showTodo = false
+		case "up", "k":
+			if m.todoCursor > 0 {
+				m.todoCursor--
+			}
+		case "down", "j":
+			if m.todoList != nil && m.todoCursor < len(m.todoList.Todos)-1 {
+				m.todoCursor++
+			}
+		case "enter", " ", "x":
+			if m.todoList != nil && len(m.todoList.Todos) > 0 {
+				t := m.todoList.Todos[m.todoCursor]
+				if t.Status == domain.TodoStatusDone {
+					t.Status = domain.TodoStatusPending
+					t.CompletedAt = nil
+				} else {
+					t.MarkDone()
+				}
+				_ = m.app.TodoStore.Save(context.Background(), m.todoList)
+			}
+		case "d":
+			if m.todoList != nil && len(m.todoList.Todos) > 0 {
+				id := m.todoList.Todos[m.todoCursor].ID
+				m.todoList.RemoveTodo(id)
+				_ = m.app.TodoStore.Save(context.Background(), m.todoList)
+				if m.todoCursor >= len(m.todoList.Todos) && m.todoCursor > 0 {
+					m.todoCursor--
+				}
+			}
 		}
 		return m, nil
 	}
@@ -474,10 +512,30 @@ func (m Model) handleSlash(command string) (tea.Model, tea.Cmd) {
 		return m.openSessionsPicker()
 	case "/todo", "/plan":
 		m.loadTodoList()
+		m.todoCursor = 0
 		m.showTodo = true
 		return m, nil
 	case "/task":
 		return m.openTaskPicker()
+	case "/diff":
+		diff, _ := m.app.Git.Diff(context.Background(), ".", false)
+		if diff == "" {
+			m.append("notice", "(sin cambios)")
+		} else {
+			m.append("notice", diff)
+		}
+		return m, nil
+	case "/commit":
+		diff, _ := m.app.Git.Diff(context.Background(), ".", true)
+		if diff == "" {
+			diff, _ = m.app.Git.Diff(context.Background(), ".", false)
+		}
+		if diff == "" {
+			m.append("notice", "(sin cambios para commit)")
+		} else {
+			m.append("notice", "Diff para commit:\n"+diff[:min(2000, len(diff))])
+		}
+		return m, nil
 	case "/help", "/?":
 		m.helpOpen = true
 		return m, nil
@@ -843,6 +901,8 @@ func (m Model) renderHelp() string {
 		"  /sessions   Retoma una sesión guardada",
 		"  /todo, /plan Visualiza la lista de tareas (todowrite)",
 		"  /task       Lista sub-agentes",
+		"  /diff       Muestra diff del working tree",
+		"  /commit     Muestra diff para commit",
 		"  /help, /?   Muestra esta ayuda",
 		"  /quit, /exit  Sale de forgen",
 		"",
