@@ -355,7 +355,7 @@ func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Overlay de todo: navegación y toggle
 	if m.showTodo {
 		switch message.String() {
-		case "esc", "q", "ctrl+c":
+		case "esc", "q", "ctrl+c", "p", "P":
 			m.showTodo = false
 		case "up", "k":
 			if m.todoCursor > 0 {
@@ -443,6 +443,15 @@ func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "?":
 		m.helpOpen = true
+		return m, nil
+
+	case "p", "P":
+		if m.input.Value() != "" {
+			break
+		}
+		m.loadTodoList()
+		m.todoCursor = 0
+		m.showTodo = !m.showTodo
 		return m, nil
 
 	case "pgup":
@@ -945,6 +954,7 @@ func (m Model) renderHelp() string {
 		"Atajos de teclado:",
 		"  Enter       Envía el mensaje",
 		"  Tab         Cambia agente (build ↔ plan)",
+		"  P           Ver plan/tareas (todowrite)",
 		"  ?           Abre esta ayuda",
 		"  PgUp/PgDn   Desplazan la conversación",
 		"  Ctrl+C      Cancela la petición en curso / sale",

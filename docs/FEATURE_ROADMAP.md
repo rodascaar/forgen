@@ -43,8 +43,8 @@
 - [x] Edición interactiva en TUI (↑/↓, Enter/x toggle, d borrar, q cerrar)
 - [x] Status bar 📋 d/t
 - [x] Slash /todo, /plan, /task
-- [ ] Persistencia .forgen/plan.yaml por proyecto (usa default store)
-- [ ] Tecla P dedicada
+- [x] Tecla P (ver plan)
+- [ ] Persistencia .forgen/plan.yaml por proyecto (usa store global, suficiente MVP)
 
 ### FASE 2.2 — LSP completo ✅
 - [x] lsp_implementation, lsp_type_definition, lsp_document_symbols, lsp_workspace_symbols, lsp_code_action, lsp_completion
