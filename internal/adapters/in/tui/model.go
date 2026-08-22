@@ -50,6 +50,8 @@ type Model struct {
 	sessionID       string
 	workspace       string
 	spinnerIndex    int
+	showTodo        bool
+	todoList        *domain.TodoList
 	width           int
 	height          int
 	quitting        bool
@@ -150,6 +152,51 @@ func (m *Model) refreshFromConfig() {
 	if wasUnconfigured && !m.noConfig {
 		m.append("notice", fmt.Sprintf("✓ Configuración lista. Modelo por defecto: %s", m.modelKey))
 	}
+}
+
+func (m *Model) loadTodoList() {
+	list, err := m.app.TodoStore.Load(context.Background(), "default")
+	if err != nil {
+		m.todoList = nil
+		return
+	}
+	m.todoList = list
+}
+
+func (m Model) renderTodoOverlay() string {
+	var b strings.Builder
+	b.WriteString(m.styles.accent.Render("Plan — lista de tareas") + "\n\n")
+	if m.todoList == nil || len(m.todoList.Todos) == 0 {
+		b.WriteString(m.styles.dim.Render("(sin tareas — el agente las crea con todowrite)") + "\n")
+	} else {
+		d, tot := m.todoList.Progress()
+		fmt.Fprintf(&b, "%s\n\n", m.styles.dim.Render(fmt.Sprintf("%d/%d (%.0f%%)", d, tot, m.todoList.ProgressPercent())))
+		for i, t := range m.todoList.Todos {
+			icon := "○"
+			switch t.Status {
+			case domain.TodoStatusDone:
+				icon = "✓"
+			case domain.TodoStatusInProgress:
+				icon = "▸"
+			case domain.TodoStatusCancelled:
+				icon = "✗"
+			}
+			line := fmt.Sprintf("%d. %s %s", i+1, icon, t.Content)
+			if t.Status == domain.TodoStatusInProgress && t.ActiveForm != "" {
+				line += " — " + t.ActiveForm
+			}
+			style := m.styles.dim
+			switch t.Status {
+			case domain.TodoStatusInProgress:
+				style = m.styles.accent
+			case domain.TodoStatusDone:
+				style = m.styles.toolDone
+			}
+			b.WriteString(style.Render(line) + "\n")
+		}
+	}
+	b.WriteString("\n" + m.styles.dim.Render("(Esc/q para cerrar · /todo en CLI para gestionar)"))
+	return b.String()
 }
 
 // Init implementa tea.Model. El setup (incluido el foco del input) se hace en
@@ -295,7 +342,14 @@ func (m *Model) resetConfirm() {
 }
 
 func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Overlay de ayuda: consume teclas hasta cerrarlo.
+	// Overlay de todo/ayuda: consume teclas hasta cerrarlo.
+	if m.showTodo {
+		switch message.String() {
+		case "esc", "q", "ctrl+c":
+			m.showTodo = false
+		}
+		return m, nil
+	}
 	if m.helpOpen {
 		switch message.String() {
 		case "esc", "q", "ctrl+c", "?":
@@ -418,6 +472,12 @@ func (m Model) handleSlash(command string) (tea.Model, tea.Cmd) {
 		return m.openModelPicker()
 	case "/sessions":
 		return m.openSessionsPicker()
+	case "/todo", "/plan":
+		m.loadTodoList()
+		m.showTodo = true
+		return m, nil
+	case "/task":
+		return m.openTaskPicker()
 	case "/help", "/?":
 		m.helpOpen = true
 		return m, nil
@@ -508,8 +568,29 @@ func (m Model) openSessionsPicker() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// openTaskPicker abre el selector de sub-agentes.
+func (m Model) openTaskPicker() (tea.Model, tea.Cmd) {
+	tasks, err := m.app.TaskStore.List(context.Background(), nil)
+	if err != nil {
+		m.append("error", fmt.Sprintf("Error: %v", err))
+		return m, nil
+	}
+	if len(tasks) == 0 {
+		m.append("notice", "No hay tareas. El agente las crea con 'task'.")
+		return m, nil
+	}
+	items := make([]pickerItem, 0, len(tasks))
+	for _, task := range tasks {
+		detail := string(task.Status) + " · " + string(task.Type)
+		items = append(items, pickerItem{label: task.Name, detail: detail, value: task.ID})
+	}
+	m.picker = newPickerModel(pickerTaskKind, "Tareas (sub-agentes)", items, m.styles, m.width, m.height)
+	return m, nil
+}
+
 // modelPickerFor construye el selector de modelos de un proveedor dado.
-func (m Model) modelPickerFor(providerConfig domain.ProviderConfig) *pickerModel {	items := make([]pickerItem, 0, len(providerConfig.Models))
+func (m Model) modelPickerFor(providerConfig domain.ProviderConfig) *pickerModel {
+	items := make([]pickerItem, 0, len(providerConfig.Models))
 	for _, model := range providerConfig.Models {
 		items = append(items, pickerItem{label: model, value: model})
 	}
@@ -556,6 +637,9 @@ func (m *Model) applyPickerSelection(selection pickerSelectedMsg) {
 		appConfig, _ := m.app.LoadConfig(ctx)
 		m.applyConfig(appConfig)
 		m.append("notice", fmt.Sprintf("Sesión %s cargada. Escribe tu prompt para continuar.", selection.value))
+
+	case pickerTaskKind:
+		m.append("notice", fmt.Sprintf("Tarea: %s", selection.value))
 	}
 }
 
@@ -683,6 +767,9 @@ func (m Model) View() string {
 	if m.picker != nil {
 		return m.picker.View()
 	}
+	if m.showTodo {
+		return m.renderTodoOverlay()
+	}
 	if m.helpOpen {
 		return m.renderHelp()
 	}
@@ -754,6 +841,8 @@ func (m Model) renderHelp() string {
 		"  /provider   Cambia el proveedor por defecto",
 		"  /model      Elige el modelo por defecto (listado en vivo)",
 		"  /sessions   Retoma una sesión guardada",
+		"  /todo, /plan Visualiza la lista de tareas (todowrite)",
+		"  /task       Lista sub-agentes",
 		"  /help, /?   Muestra esta ayuda",
 		"  /quit, /exit  Sale de forgen",
 		"",
@@ -783,6 +872,10 @@ func (m Model) renderStatus() string {
 	left += " " + m.styles.dim.Render(fmt.Sprintf("modelo:%s", m.modelKey))
 	if m.phase != "" {
 		left += " " + m.styles.accent.Render(fmt.Sprintf("fase:%s", m.phase))
+	}
+	if list, err := m.app.TodoStore.Load(context.Background(), "default"); err == nil && len(list.Todos) > 0 {
+		d, tot := list.Progress()
+		left += " " + m.styles.toolDone.Render(fmt.Sprintf("📋 %d/%d", d, tot))
 	}
 	right := ""
 	if m.confirming {

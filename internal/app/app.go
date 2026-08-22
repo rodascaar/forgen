@@ -31,6 +31,8 @@ import (
 	"github.com/rodascaar/forgen/internal/application/session"
 	"github.com/rodascaar/forgen/internal/application/skills"
 	taskadapter "github.com/rodascaar/forgen/internal/adapters/out/task"
+	apptask "github.com/rodascaar/forgen/internal/application/task"
+	apptodo "github.com/rodascaar/forgen/internal/application/todo"
 	"github.com/rodascaar/forgen/internal/application/tools"
 	"github.com/rodascaar/forgen/internal/application/usage"
 	"github.com/rodascaar/forgen/internal/application/web"
@@ -140,6 +142,10 @@ func NewApp(logger *slog.Logger) (*App, error) {
 	registry.Register(skills.NewReadSkillTool(func(name string) (skills.Skill, bool) {
 		return skills.ResolveSkill(discoveredSkills, name)
 	}))
+
+	// Herramientas de planificación y delegación
+	registry.Register(apptodo.NewTool(todoStore))
+	registry.Register(apptask.NewTool(taskStore, taskExecutor))
 
 	// Config efectiva (para web search y MCP).
 	// (ya cargada arriba; se reutiliza appConfig)

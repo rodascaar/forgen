@@ -14,6 +14,7 @@ const (
 	pickerProviderKind pickerKind = iota
 	pickerModelKind
 	pickerSessionKind
+	pickerTaskKind
 )
 
 // pickerItem es una opción del selector.

@@ -75,6 +75,11 @@ func (r *Registry) SetOutputLimit(limit int) {
 
 // newGenericTool construye una herramienta tipada con esquema y ejecución.
 func newGenericTool[ArgType any](name, description string, schema map[string]any, fn ToolFunc[ArgType]) ToolDef {
+	return NewGenericTool(name, description, schema, fn)
+}
+
+// NewGenericTool is the exported version of newGenericTool for use by other packages.
+func NewGenericTool[ArgType any](name, description string, schema map[string]any, fn ToolFunc[ArgType]) ToolDef {
 	return ToolDef{
 		Tool: domain.Tool{
 			Name:        name,
