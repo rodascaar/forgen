@@ -61,3 +61,8 @@ type LLMProvider interface {
 	// autenticado, consultando el endpoint de listado del proveedor.
 	ListModels(ctx context.Context) ([]string, error)
 }
+
+// LLMProviderFactory crea proveedores LLM para diferentes configuraciones.
+type LLMProviderFactory interface {
+	CreateWithKeyResolver(config domain.ProviderConfig, keyResolver func(domain.ProviderConfig) string, overrides map[string]string) (LLMProvider, error)
+}

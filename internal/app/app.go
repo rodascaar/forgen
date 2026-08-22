@@ -30,6 +30,7 @@ import (
 	"github.com/rodascaar/forgen/internal/application/permission"
 	"github.com/rodascaar/forgen/internal/application/session"
 	"github.com/rodascaar/forgen/internal/application/skills"
+	taskadapter "github.com/rodascaar/forgen/internal/adapters/out/task"
 	"github.com/rodascaar/forgen/internal/application/tools"
 	"github.com/rodascaar/forgen/internal/application/usage"
 	"github.com/rodascaar/forgen/internal/application/web"
@@ -43,6 +44,9 @@ type App struct {
 	ConfigService   *config.Service
 	SessionService  *session.Service
 	FermentService  *ferment.Service
+	TodoStore       ports.TodoStore
+	TaskStore       ports.TaskStore
+	TaskExecutor    ports.TaskExecutor
 	UsageService    *usage.Service
 	ToolRegistry    *tools.Registry
 	FileSystem      ports.FileSystem
@@ -88,6 +92,18 @@ func NewApp(logger *slog.Logger) (*App, error) {
 
 	usageStore := storage.NewJSONLUsageStore(paths.UsageFile)
 	usageService := usage.NewService(usageStore, logger)
+
+	todoStore, err := storage.NewJSONLTodoStore(paths.TodosFile)
+	if err != nil {
+		return nil, fmt.Errorf("crear todo store: %w", err)
+	}
+	taskStore, err := storage.NewJSONLTaskStore(paths.TasksFile)
+	if err != nil {
+		return nil, fmt.Errorf("crear task store: %w", err)
+	}
+	taskExecutor := taskadapter.NewExecutor(taskadapter.ExecutorDeps{
+		LLMFactory: llm.NewFactory(logger), Credentials: credentialStore,
+	}, taskStore)
 
 	workspace, err := os.Getwd()
 	if err != nil {
@@ -144,6 +160,9 @@ func NewApp(logger *slog.Logger) (*App, error) {
 		SessionService: sessionService,
 		FermentService: fermentService,
 		UsageService:   usageService,
+		TodoStore:      todoStore,
+		TaskStore:      taskStore,
+		TaskExecutor:   taskExecutor,
 		ToolRegistry:   registry,
 		FileSystem:     fileSystem,
 		Language:       language.NewDetector(),

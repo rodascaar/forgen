@@ -15,6 +15,8 @@ type Paths struct {
 	UsageFile       string
 	RulesFile       string
 	CredentialsFile string
+	TodosFile       string
+	TasksFile       string
 }
 
 // ResolvePaths calcula las rutas siguiendo la especificación XDG, con
@@ -37,6 +39,8 @@ func ResolvePaths() Paths {
 		UsageFile:       filepath.Join(dataDir, "usage.jsonl"),
 		RulesFile:       filepath.Join(dataDir, "permissions.yaml"),
 		CredentialsFile: filepath.Join(configDir, "credentials"),
+		TodosFile:       filepath.Join(dataDir, "todos.jsonl"),
+		TasksFile:       filepath.Join(dataDir, "tasks.jsonl"),
 	}
 }
 
