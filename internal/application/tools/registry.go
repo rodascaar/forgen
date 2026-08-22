@@ -53,6 +53,7 @@ func NewRegistry(fs ports.FileSystem, executor ports.Executor, git ports.Git, ou
 	registry.register(registry.bashTool())
 	registry.register(registry.gitStatusTool())
 	registry.register(registry.gitDiffTool())
+	registry.register(registry.applyPatchTool())
 	return registry
 }
 
@@ -353,6 +354,122 @@ func (r *Registry) gitDiffTool() ToolDef {
 			}
 			return domain.ToolResult{OK: true, Output: diff}
 		})
+}
+
+type applyPatchArgs struct {
+	Patch string `json:"patch"`
+}
+
+func (r *Registry) applyPatchTool() ToolDef {
+	return newGenericTool("apply_patch", "Aplica un patch unificado (unified diff) al workspace. Úsalo para cambios estructurados y revisables en vez de múltiples edits.",
+		objectSchema(map[string]map[string]any{
+			"patch": stringProp("Contenido del patch en formato unified diff (ej: '*** Begin Patch\\n*** Update File: path\\n@@ ...') o diff estándar"),
+		}, "patch"),
+		func(ctx context.Context, args applyPatchArgs) domain.ToolResult {
+			if strings.TrimSpace(args.Patch) == "" {
+				return domain.ToolResult{OK: false, Error: fmt.Errorf("patch vacío")}
+			}
+			// Soporta formato '*** Begin Patch' de Codex y diff estándar
+			patch := args.Patch
+			if strings.Contains(patch, "*** Begin Patch") {
+				return r.applyBeginPatch(ctx, patch)
+			}
+			// Diff estándar: escribir a temp y aplicar con git apply
+			tmp, err := os.CreateTemp("", "forgen-patch-*.diff")
+			if err != nil {
+				return domain.ToolResult{OK: false, Error: fmt.Errorf("crear temp: %w", err)}
+			}
+			defer func() { _ = os.Remove(tmp.Name()) }()
+			if _, err := tmp.WriteString(patch); err != nil {
+				return domain.ToolResult{OK: false, Error: err}
+			}
+			if err := tmp.Close(); err != nil {
+				return domain.ToolResult{OK: false, Error: err}
+			}
+			// Verificar y aplicar
+			if res, err := r.executor.Execute(ctx, fmt.Sprintf("git apply --check %q", tmp.Name()), ".", nil); err != nil || res.ExitCode != 0 {
+				return domain.ToolResult{OK: false, Error: fmt.Errorf("patch no aplica limpio: %s", res.Stderr+res.Stdout)}
+			}
+			res, err := r.executor.Execute(ctx, fmt.Sprintf("git apply %q", tmp.Name()), ".", nil)
+			if err != nil {
+				return domain.ToolResult{OK: false, Error: fmt.Errorf("git apply: %w", err)}
+			}
+			if res.ExitCode != 0 {
+				return domain.ToolResult{OK: false, Error: fmt.Errorf("git apply falló: %s", res.Stderr+res.Stdout)}
+			}
+			out := strings.TrimSpace(res.Stdout + res.Stderr)
+			if out == "" {
+				out = "Patch aplicado correctamente"
+			}
+			return domain.ToolResult{OK: true, Output: out}
+		})
+}
+
+func (r *Registry) applyBeginPatch(ctx context.Context, patch string) domain.ToolResult {
+	// Formato Codex: *** Begin Patch / *** Update File: / *** End Patch
+	lines := strings.Split(patch, "\n")
+	var currentFile string
+	var hunks []string
+	var outputs []string
+	flush := func() {
+		if currentFile == "" || len(hunks) == 0 {
+			return
+		}
+		content := strings.Join(hunks, "\n")
+		dir := filepath.Dir(currentFile)
+		if dir != "." && dir != "" {
+			_, _ = r.executor.Execute(ctx, fmt.Sprintf("mkdir -p %q", dir), ".", nil)
+		}
+		if err := r.fs.Write(ctx, currentFile, []byte(content)); err != nil {
+			outputs = append(outputs, fmt.Sprintf("✗ %s: %v", currentFile, err))
+		} else {
+			outputs = append(outputs, fmt.Sprintf("✓ %s", currentFile))
+		}
+		hunks = nil
+	}
+	for _, line := range lines {
+		switch {
+		case strings.HasPrefix(line, "*** Begin Patch"), strings.HasPrefix(line, "*** End Patch"):
+			continue
+		case strings.HasPrefix(line, "*** Update File:"):
+			flush()
+			currentFile = strings.TrimSpace(strings.TrimPrefix(line, "*** Update File:"))
+			hunks = []string{}
+		case strings.HasPrefix(line, "*** Add File:"):
+			flush()
+			currentFile = strings.TrimSpace(strings.TrimPrefix(line, "*** Add File:"))
+			hunks = []string{}
+		case strings.HasPrefix(line, "*** Delete File:"):
+			flush()
+			p := strings.TrimSpace(strings.TrimPrefix(line, "*** Delete File:"))
+			if _, err := r.executor.Execute(ctx, fmt.Sprintf("rm -f %q", p), ".", nil); err == nil {
+				outputs = append(outputs, fmt.Sprintf("✗ eliminado %s", p))
+			}
+			currentFile = ""
+		default:
+			if currentFile != "" {
+				// Saltar líneas de diff header @@
+				if strings.HasPrefix(line, "@@") {
+					continue
+				}
+				// Quitar prefijo +/-
+				if strings.HasPrefix(line, "+") {
+					hunks = append(hunks, line[1:])
+				} else if strings.HasPrefix(line, "-") {
+					// línea eliminada, no añadir
+				} else if strings.HasPrefix(line, " ") {
+					hunks = append(hunks, line[1:])
+				} else {
+					hunks = append(hunks, line)
+				}
+			}
+		}
+	}
+	flush()
+	if len(outputs) == 0 {
+		return domain.ToolResult{OK: false, Error: fmt.Errorf("patch vacío o no reconocido")}
+	}
+	return domain.ToolResult{OK: true, Output: strings.Join(outputs, "\n")}
 }
 
 // FilePathFor resuelve una ruta relativa contra el workspace.
