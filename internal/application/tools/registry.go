@@ -149,7 +149,7 @@ type readArgs struct {
 
 func (r *Registry) readTool() ToolDef {
 	return newGenericTool("read", "Lee el contenido de un archivo (con offset y límite opcionales para archivos grandes).",
-		objectSchema(map[string]map[string]any{
+		objectSchema(map[string]any{
 			"path":   stringProp("Ruta del archivo relativa o absoluta"),
 			"offset": intProp("Línea inicial opcional (1-based)"),
 			"limit":  intProp("Máximo de líneas a leer opcional"),
@@ -189,7 +189,7 @@ type writeArgs struct {
 
 func (r *Registry) writeTool() ToolDef {
 	return newGenericTool("write", "Escribe contenido en un archivo (crea directorios y sobreescribe).",
-		objectSchema(map[string]map[string]any{
+		objectSchema(map[string]any{
 			"path":    stringProp("Ruta del archivo a escribir"),
 			"content": stringProp("Contenido completo del archivo"),
 		}, "path", "content"),
@@ -209,7 +209,7 @@ type editArgs struct {
 
 func (r *Registry) editTool() ToolDef {
 	return newGenericTool("edit", "Reemplaza la primera ocurrencia exacta de old_string por new_string en un archivo.",
-		objectSchema(map[string]map[string]any{
+		objectSchema(map[string]any{
 			"path":       stringProp("Ruta del archivo a editar"),
 			"old_string": stringProp("Texto exacto a reemplazar (debe aparecer una vez)"),
 			"new_string": stringProp("Texto de reemplazo"),
@@ -241,7 +241,7 @@ type globArgs struct {
 
 func (r *Registry) globTool() ToolDef {
 	return newGenericTool("glob", "Encuentra archivos por patrón glob (ej: **/*.go).",
-		objectSchema(map[string]map[string]any{
+		objectSchema(map[string]any{
 			"pattern": stringProp("Patrón glob"),
 		}, "pattern"),
 		func(ctx context.Context, args globArgs) domain.ToolResult {
@@ -264,7 +264,7 @@ type grepArgs struct {
 
 func (r *Registry) grepTool() ToolDef {
 	return newGenericTool("grep", "Busca un patrón regex en archivos del proyecto y devuelve coincidencias con línea y texto.",
-		objectSchema(map[string]map[string]any{
+		objectSchema(map[string]any{
 			"query":   stringProp("Patrón regex a buscar"),
 			"path":    stringProp("Directorio raíz de búsqueda (por defecto el workspace)"),
 			"include": stringProp("Filtro glob opcional, ej: *.go, *.{ts,tsx}"),
@@ -296,7 +296,7 @@ type bashArgs struct {
 
 func (r *Registry) bashTool() ToolDef {
 	return newGenericTool("bash", "Ejecuta un comando de shell en el workspace y devuelve stdout/stderr y exit code.",
-		objectSchema(map[string]map[string]any{
+		objectSchema(map[string]any{
 			"command": stringProp("Comando shell a ejecutar"),
 			"workdir": stringProp("Directorio de trabajo opcional"),
 		}, "command"),
@@ -341,7 +341,7 @@ type gitDiffArgs struct {
 
 func (r *Registry) gitDiffTool() ToolDef {
 	return newGenericTool("git_diff", "Devuelve el diff del working tree (no stageado por defecto).",
-		objectSchema(map[string]map[string]any{
+		objectSchema(map[string]any{
 			"staged": boolProp("Si true, devuelve el diff stageado"),
 		}),
 		func(ctx context.Context, args gitDiffArgs) domain.ToolResult {
@@ -362,7 +362,7 @@ type applyPatchArgs struct {
 
 func (r *Registry) applyPatchTool() ToolDef {
 	return newGenericTool("apply_patch", "Aplica un patch unificado (unified diff) al workspace. Úsalo para cambios estructurados y revisables en vez de múltiples edits.",
-		objectSchema(map[string]map[string]any{
+		objectSchema(map[string]any{
 			"patch": stringProp("Contenido del patch en formato unified diff (ej: '*** Begin Patch\\n*** Update File: path\\n@@ ...') o diff estándar"),
 		}, "patch"),
 		func(ctx context.Context, args applyPatchArgs) domain.ToolResult {

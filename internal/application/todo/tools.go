@@ -30,9 +30,9 @@ func NewTool(store ports.TodoStore) tools.ToolDef {
 					"items": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
-							"content":    map[string]any{"type": "string"},
+							"content":     map[string]any{"type": "string", "description": "Descripción breve de la tarea"},
 							"status":     map[string]any{"type": "string", "enum": []string{"pending", "in_progress", "completed", "cancelled"}},
-							"activeForm": map[string]any{"type": "string"},
+							"activeForm": map[string]any{"type": "string", "description": "Forma activa/gerundio, ej 'Creando archivo X'"},
 						},
 						"required": []string{"content", "status"},
 					},
@@ -82,6 +82,15 @@ func NewTool(store ports.TodoStore) tools.ToolDef {
 				t := domain.NewTodo(e.Content, e.ActiveForm)
 				t.Status = status
 				list.Todos = append(list.Todos, t)
+			}
+			inProgress = 0
+			for _, t := range list.Todos {
+				if t.Status == domain.TodoStatusInProgress {
+					inProgress++
+				}
+			}
+			if inProgress > 1 {
+				return domain.ToolResult{OK: false, Error: fmt.Errorf("todowrite: solo puede haber un 'in_progress' a la vez (hay %d)", inProgress)}
 			}
 			if err := store.Save(ctx, list); err != nil {
 				return domain.ToolResult{OK: false, Error: fmt.Errorf("todowrite: guardar: %w", err)}

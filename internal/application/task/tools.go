@@ -13,9 +13,9 @@ const ToolName = "task"
 
 func NewTool(store ports.TaskStore, executor ports.TaskExecutor) tools.ToolDef {
 	return tools.NewGenericTool[struct {
-		Description string `json:"description"`
-		Prompt      string `json:"prompt"`
-		SubagentType string `json:"subagent_type"`
+		Description   string `json:"description"`
+		Prompt        string `json:"prompt"`
+		SubagentType  string `json:"subagent_type"`
 	}](ToolName,
 		"Lanza un sub-agente para una tarea compleja y autónoma. Úsalo para explore/plan/build/review/research.",
 		map[string]any{
@@ -28,9 +28,9 @@ func NewTool(store ports.TaskStore, executor ports.TaskExecutor) tools.ToolDef {
 			"required": []string{"description", "prompt", "subagent_type"},
 		},
 		func(ctx context.Context, args struct {
-			Description string `json:"description"`
-			Prompt      string `json:"prompt"`
-			SubagentType string `json:"subagent_type"`
+			Description   string `json:"description"`
+			Prompt        string `json:"prompt"`
+			SubagentType  string `json:"subagent_type"`
 		}) domain.ToolResult {
 			tType := domain.TaskType(args.SubagentType)
 			if tType == "" {

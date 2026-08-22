@@ -10,10 +10,20 @@ import (
 
 // schema helpers para construir JSON Schema de forma concisa.
 
-func objectSchema(properties map[string]map[string]any, required ...string) map[string]any {
+func objectSchema(properties map[string]any, required ...string) map[string]any {
+	props := make(map[string]map[string]any, len(properties))
+	for k, v := range properties {
+		if m, ok := v.(map[string]any); ok {
+			props[k] = m
+		} else {
+			// Assume it's already a property schema (map[string]any with type/description)
+			// Wrap it in the expected format
+			props[k] = map[string]any{"type": "string", "description": fmt.Sprintf("%v", v)}
+		}
+	}
 	schema := map[string]any{
 		"type":       "object",
-		"properties": properties,
+		"properties": props,
 	}
 	if len(required) > 0 {
 		schema["required"] = required
@@ -25,13 +35,16 @@ func stringProp(description string) map[string]any {
 	return map[string]any{"type": "string", "description": description}
 }
 
+
 func intProp(description string) map[string]any {
 	return map[string]any{"type": "integer", "description": description}
 }
 
+
 func boolProp(description string) map[string]any {
 	return map[string]any{"type": "boolean", "description": description}
 }
+
 
 // decodeArgs convierte los argumentos tipados del modelo a un struct destino.
 func decodeArgs[ArgType any](raw map[string]any) (ArgType, error) {
