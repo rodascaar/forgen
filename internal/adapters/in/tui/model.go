@@ -30,7 +30,10 @@ type transcriptLine struct {
 
 // slashHelpText resume los comandos disponibles dentro de la TUI.
 const slashHelpText = `Comandos: /init configura tu proveedor y API key · /help esta ayuda · /quit sale
-Atajos: Enter envía · Tab cambia agente · ? ayuda · PgUp/PgDn desplazan la conversación · Ctrl+C cancela`
+Atajos: Enter envía · Tab cambia agente · Ctrl+H ayuda · PgUp/PgDn o Ctrl+U/D desplazan · Ctrl+C cancela / Ctrl+Q salir (2×)`
+
+// quitConfirmMsg resetea la confirmación de salida tras un timeout.
+type quitConfirmMsg struct{}
 
 // Model es el estado de la TUI.
 type Model struct {
@@ -64,6 +67,7 @@ type Model struct {
 	wizard          *wizardModel
 	picker          *pickerModel
 	helpOpen        bool
+	quitArmed       bool
 }
 
 // Run inicia la TUI en modo pantalla alternativa.
@@ -84,7 +88,7 @@ func Run(app *apppkg.App) error {
 // (a diferencia de Init(), que solo devuelve el Cmd y descarta mutaciones).
 func newModel(app *apppkg.App) Model {
 	input := textinput.New()
-	input.Placeholder = "Describe tu tarea... (/ para comandos, ? ayuda, Enter envía)"
+	input.Placeholder = "Describe tu tarea... (/ comandos · Ctrl+H ayuda · Enter envía)"
 	input.Prompt = "❯ "
 	input.Width = 80
 	// El foco debe quedar en el input del modelo vivo. No se puede hacer en
@@ -207,7 +211,7 @@ func (m Model) renderTodoOverlay() string {
 			b.WriteString(line + "\n")
 		}
 	}
-	b.WriteString("\n" + m.styles.dim.Render("(↑/↓ mover · Enter/x toggle · d borrar · Esc/q cerrar)"))
+	b.WriteString("\n" + m.styles.dim.Render("(↑/↓ mover · Enter/x toggle · d borrar · Esc/q cerrar · Ctrl+P cierra)"))
 	return b.String()
 }
 
@@ -265,7 +269,7 @@ func (m Model) renderMCPOverlay() string {
 		b.WriteString("\n" + m.styles.dim.Render(fmt.Sprintf("tools registradas: %d (mcp_* incluidas)", count)))
 	}
 	b.WriteString("\n\n" + m.styles.dim.Render("Comandos: forgen mcp add <nombre> --type stdio --command npx  ·  --type http --url https://..."))
-	b.WriteString("\n" + m.styles.dim.Render("(↑/↓ mover · Esc/q cerrar · /mcp para alternar)"))
+	b.WriteString("\n" + m.styles.dim.Render("(↑/↓ mover · Esc/q cerrar · Ctrl+M cierra · /mcp alterna)"))
 	return b.String()
 }
 
@@ -403,6 +407,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg{} })
 		}
 		return m, nil
+
+	case quitConfirmMsg:
+		m.quitArmed = false
+		return m, nil
 	}
 	return m, nil
 }
@@ -416,11 +424,12 @@ func (m *Model) resetConfirm() {
 }
 
 func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Overlay de MCP: navegación simple
+	// Overlay de MCP: navegación simple — cuchara: solo cierres estándar
 	if m.showMCP {
 		switch message.String() {
-		case "esc", "q", "ctrl+c", "m", "M":
+		case "esc", "q", "ctrl+c":
 			m.showMCP = false
+			m.quitArmed = false
 		case "up", "k":
 			if m.mcpCursor > 0 {
 				m.mcpCursor--
@@ -433,11 +442,12 @@ func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	// Overlay de todo: navegación y toggle
+	// Overlay de todo: navegación y toggle — cuchara: solo cierres estándar
 	if m.showTodo {
 		switch message.String() {
-		case "esc", "q", "ctrl+c", "p", "P":
+		case "esc", "q", "ctrl+c":
 			m.showTodo = false
+			m.quitArmed = false
 		case "up", "k":
 			if m.todoCursor > 0 {
 				m.todoCursor--
@@ -471,8 +481,9 @@ func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.helpOpen {
 		switch message.String() {
-		case "esc", "q", "ctrl+c", "?":
+		case "esc", "q", "ctrl+c", "ctrl+h":
 			m.helpOpen = false
+			m.quitArmed = false
 		}
 		return m, nil
 	}
@@ -495,63 +506,74 @@ func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch message.String() {
-	case "ctrl+c":
+	case "ctrl+c", "alt+c":
 		if m.running {
 			if m.cancelRun != nil {
 				m.cancelRun()
 			}
 			m.append("notice", "Cancelando petición...")
+			m.quitArmed = false
 			return m, nil
 		}
-		m.quitting = true
-		return m, tea.Quit
-
-	case "q":
-		// 'q' sale solo con el prompt vacío; si hay texto, se deja escribir
-		// la letra 'q' en el campo de entrada.
-		if m.input.Value() != "" {
-			break
+		if m.quitArmed {
+			m.quitting = true
+			return m, tea.Quit
 		}
+		m.quitArmed = true
+		m.append("notice", "¿Salir? Pulsa Ctrl+C o Ctrl+Q de nuevo para confirmar · Esc cancela")
+		return m, tea.Tick(3*time.Second, func(t time.Time) tea.Msg { return quitConfirmMsg{} })
+
+	case "ctrl+q", "alt+q":
 		if m.running {
 			if m.cancelRun != nil {
 				m.cancelRun()
 			}
 			m.append("notice", "Cancelando petición...")
+			m.quitArmed = false
 			return m, nil
 		}
-		m.quitting = true
-		return m, tea.Quit
-
-	case "?":
-		m.helpOpen = true
-		return m, nil
-
-	case "p", "P":
-		if m.input.Value() != "" {
-			break
+		if m.quitArmed {
+			m.quitting = true
+			return m, tea.Quit
 		}
+		m.quitArmed = true
+		m.append("notice", "¿Salir? Pulsa Ctrl+Q o Ctrl+C de nuevo para confirmar · Esc cancela")
+		return m, tea.Tick(3*time.Second, func(t time.Time) tea.Msg { return quitConfirmMsg{} })
+
+	case "esc":
+		// Esc cancela confirmación de salida y no interfiere con escritura
+		if m.quitArmed {
+			m.quitArmed = false
+			m.append("notice", "Salida cancelada")
+			return m, nil
+		}
+		break
+
+	case "ctrl+p", "alt+p":
+		m.quitArmed = false
 		m.loadTodoList()
 		m.todoCursor = 0
-		m.showTodo = !m.showTodo
+		m.showTodo = true
 		return m, nil
 
-	case "m", "M":
-		if m.input.Value() != "" {
-			break
-		}
-		if m.showMCP {
-			m.showMCP = false
-			return m, nil
-		}
+	case "ctrl+m", "alt+m":
+		m.quitArmed = false
 		m.mcpCursor = 0
 		m.showMCP = true
 		return m, nil
 
-	case "pgup":
+	case "ctrl+h", "alt+h":
+		m.quitArmed = false
+		m.helpOpen = true
+		return m, nil
+
+	case "pgup", "ctrl+u":
+		m.quitArmed = false
 		m.scrollOffset += m.height - 4
 		return m, nil
 
-	case "pgdown":
+	case "pgdown", "ctrl+d":
+		m.quitArmed = false
 		m.scrollOffset -= m.height - 4
 		if m.scrollOffset < 0 {
 			m.scrollOffset = 0
@@ -559,6 +581,7 @@ func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "tab":
+		m.quitArmed = false
 		if m.running {
 			return m, nil
 		}
@@ -566,6 +589,7 @@ func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "enter":
+		m.quitArmed = false
 		prompt := strings.TrimSpace(m.input.Value())
 		if prompt == "" || m.running {
 			return m, nil
@@ -589,6 +613,11 @@ func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 		ctx, cancel := context.WithCancel(context.Background())
 		m.cancelRun = cancel
 		return m, m.startRun(ctx, prompt)
+
+	default:
+		// Cualquier tecla no reconocida como atajo desarma el quit y cae al input.
+		// Letras como q/p/m/? ahora escriben sin abrir menús — principio cuchara.
+		m.quitArmed = false
 	}
 
 	var command tea.Cmd
@@ -1034,6 +1063,8 @@ func (m Model) renderHelp() string {
 	lines := []string{
 		m.styles.accent.Render("forgen — ayuda rápida"),
 		"",
+		"Escribir es siempre seguro: ninguna letra sola abre menús. Usa /comandos o Ctrl+atajos.",
+		"",
 		"Comandos slash (escribe / y Enter en el campo):",
 		"  /init       Configura tu proveedor y API key",
 		"  /provider   Cambia el proveedor por defecto",
@@ -1041,7 +1072,7 @@ func (m Model) renderHelp() string {
 		"  /sessions   Retoma una sesión guardada",
 		"  /todo, /plan Visualiza la lista de tareas (todowrite)",
 		"  /task       Lista sub-agentes",
-		"  /mcp        MCP servidores (M para toggle)",
+		"  /mcp        MCP servidores",
 		"  /diff       Muestra diff del working tree",
 		"  /commit     Muestra diff para commit",
 		"  /review     Code review del diff (sub-agente)",
@@ -1052,19 +1083,21 @@ func (m Model) renderHelp() string {
 		"  /help, /?   Muestra esta ayuda",
 		"  /quit, /exit  Sale de forgen",
 		"",
-		"Atajos de teclado:",
+		"Atajos de teclado (cuchara: requieren Ctrl):",
 		"  Enter       Envía el mensaje",
 		"  Tab         Cambia agente (build ↔ plan)",
-		"  P           Ver plan/tareas (todowrite)",
-		"  M           MCP servidores",
-		"  ?           Abre esta ayuda",
-		"  PgUp/PgDn   Desplazan la conversación",
-		"  Ctrl+C      Cancela la petición en curso / sale",
+		"  Ctrl+P      Ver plan/tareas (todowrite) — también /todo",
+		"  Ctrl+M      MCP servidores — también /mcp",
+		"  Ctrl+H      Abre esta ayuda — también /help",
+		"  PgUp/PgDn   Desplazan la conversación (también Ctrl+U / Ctrl+D)",
+		"  Ctrl+C      Cancela la petición en curso",
+		"  Ctrl+Q/C    Salir (pulsar 2 veces · Esc cancela)",
+		"  Esc         Cierra overlays / cancela salida",
 		"",
 		"Consejo: la primera vez escribe /init para conectar tu proveedor favorito",
 		"(OpenAI, Anthropic, OpenRouter, Groq, Ollama y más). Solo necesitas tu API key.",
 		"",
-		m.styles.dim.Render("(Esc o q para cerrar)"),
+		m.styles.dim.Render("(Esc o q para cerrar ayuda — Ctrl+H también)"),
 	}
 	return strings.Join(lines, "\n")
 }
@@ -1089,9 +1122,13 @@ func (m Model) renderStatus() string {
 	if m.confirming {
 		right = m.styles.notice.Render(fmt.Sprintf("¿Permitir %s? (y/n, ? ver detalle)", toolCallLabel(m.confirmCall)))
 	} else if m.running {
-		right = m.styles.dim.Render("trabajando...")
+		right = m.styles.dim.Render("trabajando... · Ctrl+C cancela")
+	} else if m.quitArmed {
+		right = m.styles.notice.Render("¿Salir? Ctrl+Q/C de nuevo · Esc cancela")
 	} else if m.noConfig {
 		right = m.styles.notice.Render("sin configurar — escribe /init")
+	} else {
+		right = m.styles.dim.Render("Ctrl+P plan · Ctrl+M mcp · Ctrl+H ayuda · / comandos · Tab agente")
 	}
 	if m.width > 0 {
 		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2

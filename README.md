@@ -1,50 +1,112 @@
 # forgen
 
-Agente de código que corre en tu terminal. **Agnóstico a lenguaje y proveedor**: funciona con cualquier lenguaje de programación y cualquier proveedor LLM (OpenAI-compatible, Anthropic, Kimchi, local/Ollama).
+> Agente de código en tu terminal. Escribe en lenguaje natural, forgen lee, edita y ejecuta — con el LLM y el lenguaje que ya usas.
 
-Escrito en Go con **arquitectura hexagonal**, binario único estático, sin cgo.
+[![Go Version](https://img.shields.io/badge/go-1.22+-00ADD8?style=flat&logo=go)](go.mod)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat)](LICENSE)
+[![Build](https://img.shields.io/badge/build-passing-brightgreen?style=flat)](#tests)
 
-## Estado
+**¿Qué es?** Un binario único en Go, sin dependencias, que lleva un agente autónomo a tu repo local.
+**¿Para qué sirve?** Explicar código, crear features, hacer refactors, correr tests y generar PRs sin salir del terminal.
+**¿Cómo lo uso ahora?** `forgen` → describe tu tarea → `Enter`. Ver [Quick Start](#quick-start).
 
-Fases 1, 2, 3 y 4 implementadas. Ver [`docs/CHECKLIST.md`](docs/CHECKLIST.md) para el plan 0-100%.
+## Tabla de contenidos
+
+- [Instalación](#instalación)
+- [Quick Start](#quick-start)
+- [Uso](#uso)
+- [Configuración](#configuración)
+- [Ejemplos](#ejemplos)
+- [Herramientas y capacidades](#herramientas-y-capacidades)
+- [Contribuir](#contribuir)
+- [Tests](#tests)
+- [Licencia](#licencia)
 
 ## Instalación
 
+**Requisitos:** Go 1.22+, Git, y una API key de tu proveedor LLM.
+
 ```bash
-git clone <repo>
+git clone https://github.com/rodascaar/forgen.git
 cd forgen
 go build -o bin/forgen ./cmd/forgen
 # opcional: instalar en el PATH
 go install ./cmd/forgen
+# verificar
+forgen version
+forgen doctor
 ```
+
+¿Sin Go? Descarga el binario de [Releases](https://github.com/rodascaar/forgen/releases) y ponlo en tu `PATH`.
+
+## Quick Start
+
+Todo funciona con comandos copy-paste. 60 segundos para estar productivo:
+
+```bash
+# 1. Configura tu LLM (wizard interactivo, la key queda en el keychain del SO)
+forgen init
+# alternativa directa:
+forgen auth              # te pide solo la API key y detecta tus modelos
+forgen provider list     # ver proveedores disponibles
+
+# 2. Abre la TUI
+forgen
+# Dentro: escribe tu tarea y pulsa Enter
+# > añade un endpoint GET /health que devuelva {status:"ok"}
+
+# 3. Sin TUI (headless, ideal para CI)
+forgen ask "explica este repo en 5 bullets"
+forgen ask --json "lista los TODOs y propone un plan" > out.jsonl
+```
+
+Primera vez sin configurar: `forgen` te muestra `Escribe /init para empezar` — no necesitas leer docs.
+
+## Uso
+
+### CLI
+
+```bash
+forgen                              # TUI interactiva
+forgen ask "tu prompt"              # una petición headless
+forgen ask --session <id> "sigue"   # continuar sesión
+forgen sessions                     # listar sesiones guardadas
+forgen sessions resume <id>         # ver sesión
+forgen config                       # config efectiva
+forgen provider list                # proveedores y modelos
+forgen provider add openai          # añadir proveedor
+forgen mcp list                     # servidores MCP
+forgen usage                        # consumo tokens
+forgen upgrade --check              # comprobar actualización
+```
+
+### Dentro de la TUI
+
+Escribir es siempre seguro: **ninguna letra sola abre menús**. Todo es `/comando` o `Ctrl+atajo`.
+
+| Comando | Acción |
+|---------|--------|
+| `/init` | Configura proveedor y API key |
+| `/provider` | Cambia proveedor por defecto |
+| `/model` | Cambia modelo (listado en vivo) |
+| `/sessions` | Retoma sesión guardada |
+| `/todo` `/plan` | Ver lista de tareas |
+| `/task` | Ver sub-agentes |
+| `/mcp` | Ver servidores MCP |
+| `/diff` `/commit` | Ver cambios git |
+| `/review` `/test` `/lint` `/fix` | Delegar a sub-agente |
+| `/help` `/?` | Ayuda |
+| `/quit` `/exit` | Salir |
+
+**Atajos (estándar global):**
+
+`Enter` envía · `Tab` cambia agente `build↔plan` · `Ctrl+H` ayuda · `Ctrl+P` plan · `Ctrl+M` MCP · `PgUp/PgDn` o `Ctrl+U/D` scroll · `Ctrl+C` cancela · `Ctrl+Q` o `Ctrl+C` dos veces para salir ( `Esc` cancela).
+
+Footer siempre visible: `Ctrl+P plan · Ctrl+M mcp · Ctrl+H ayuda · / comandos · Tab agente`.
 
 ## Configuración
 
-```bash
-forgen init          # wizard interactivo (proveedores + modelo por defecto)
-forgen auth          # guarda tu API key y detecta los modelos de tu cuenta
-forgen doctor        # diagnóstico del entorno
-```
-
-También puedes configurarlo desde la propia TUI: al abrir `forgen` sin
-configurar, verás una guía que te lleva a `/init`, un asistente que te deja
-elegir tu proveedor, pegar tu API key (enmascarada) y validarla, todo sin salir
-del programa.
-
-`forgen auth` (o `forgen provider add <proveedor>`) te deja configurar un
-proveedor conocido escribiendo **solo tu API key**: forgen consulta el endpoint
-de listado del proveedor y guarda automáticamente los modelos disponibles para
-tu cuenta. La key se almacena en el almacén seguro del sistema operativo
-(Keychain / Secret Service / Credential Manager) con respaldo local `0600`, y
-nunca viaja al contexto del agente, logs, prompts ni dumps de configuración.
-
-Soporta los principales proveedores OpenAI-compatibles (OpenAI, OpenRouter,
-Groq, Cerebras, Together, DeepSeek, Kimi, xAI, Gemini, Zhipu, Mistral, etc.)
-y Anthropic nativo. La lista completa está en `forgen provider list`.
-
-La configuración vive en `~/.config/forgen/config.yaml` (XDG) y soporta estas capas de precedencia: **defaults < archivo < variables de entorno (`FORGEN_*`) < flags de CLI**.
-
-Ejemplo de `config.yaml`:
+Config vive en `~/.config/forgen/config.yaml` (XDG). Precedencia: `defaults < archivo < env FORGEN_* < flags`.
 
 ```yaml
 providers:
@@ -53,11 +115,6 @@ providers:
     base_url: https://api.openai.com/v1
     api_key_env: OPENAI_API_KEY
     models: [gpt-5, gpt-5-mini]
-  - name: anthropic
-    type: anthropic
-    base_url: https://api.anthropic.com
-    api_key_env: ANTHROPIC_API_KEY
-    models: [claude-sonnet-4-5]
   - name: local
     type: openai_compatible
     base_url: http://localhost:11434/v1
@@ -69,192 +126,79 @@ default:
 permissions:
   mode: auto        # auto | on_request | never
 agent: build        # build | plan
+theme:
+  accent: "#7aa4ff"
 ```
 
-## Uso
+**Proveedores soportados:** cualquier API `OpenAI-compatible` (OpenAI, OpenRouter, Groq, Together, Mistral, Ollama local, etc.) y Anthropic nativo. `forgen provider list` muestra presets; `forgen auth` guarda tu key en el keychain ( `0600` fallback ) y auto-detecta modelos.
+
+Variables útiles: `FORGEN_CONFIG_DIR`, `FORGEN_DATA_DIR`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `BRAVE_API_KEY` (búsqueda).
+
+## Ejemplos
 
 ```bash
-forgen                              # TUI interactiva (Tab cambia build/plan)
-forgen ask "explica este repo"      # petición única headless
-forgen ask --json "..."             # salida JSON (eventos para integraciones)
-forgen ask --session <id> "..."     # continua una sesión existente
-forgen sessions                     # lista sesiones guardadas
-forgen sessions resume <id>         # ver una sesión
-forgen sessions delete <id>         # eliminar una sesión
-forgen config                       # ver configuración efectiva
-forgen agent use plan               # cambiar agente por defecto
-forgen auth [proveedor]             # guarda tu API key y detecta tus modelos
-forgen provider list                # proveedores configurados + presets
-forgen provider add <proveedor>     # añade un proveedor conocido
-forgen provider remove <proveedor>  # elimina un proveedor y su credencial
-forgen upgrade --check             # comprueba si hay una versión nueva
-forgen upgrade                     # se actualiza a la última versión
-forgen version                     # muestra la versión actual
+# Planificar antes de codificar
+forgen
+> /plan
+> diseña un plan para añadir autenticación JWT, no codifiques aún — solo el plan
+
+# Revisar tu diff actual
+forgen
+> /review
+
+# Fix automático de tests/lint
+forgen
+> /fix
+
+# Headless en CI
+forgen ask --json "ejecuta go test ./... y resume fallos" | jq
+
+# MCP: darle herramientas externas al agente
+forgen mcp add filesystem --type stdio --command npx --args "-y,@modelcontextprotocol/server-filesystem,/tmp"
+forgen mcp test filesystem
 ```
 
-### Dentro de la TUI (slash commands)
+## Herramientas y capacidades
 
-Sin salir de la interfaz interactiva puedes gestionar todo con comandos `/`:
+- **Edición segura:** `read` `write` `edit` `glob` `grep` `bash` `git_status` `git_diff` — sobre puertos inyectables, testeables sin tocar disco.
+- **LSP opcional:** si `gopls`, `typescript-language-server`, `rust-analyzer` o `pyright` están instalados, forgen usa `lsp_diagnostics` `lsp_hover` `lsp_definition` `lsp_references` `lsp_rename`.
+- **MCP:** `stdio` / `http` / `sse`. Tools como `<server>_<tool>`. `forgen mcp add <nombre> --type http --url https://...` · `forgen mcp migrate` importa servidores existentes sin sobrescribir.
+- **Búsqueda web:** `web_search` (Brave) + `web_fetch` (extrae texto de URL). Config: `search.provider: brave`.
+- **Proyectos multi-sesión:** `forgen ferment new "Build Tetris"` · `forgen ferment list/progress/switch/export` — snapshot atómico + log append-only, se rehidrata al reabrir.
+- **Skills:** carpetas con `SKILL.md` en `~/.config/forgen/skills/` o `.forgen/skills/` — el catálogo se inyecta al prompt y el agente usa `read_skill`.
+- **Seguridad:** keys en keychain, nunca en logs; `permissions: auto` bloquea `sudo`/`rm -rf /`/`chmod 777`; `forgen trace` genera reporte sin secretos; `execution.sandbox: docker` aísla `bash`.
 
-| Comando | Acción |
-|---------|--------|
-| `/init` | Asistente: elige proveedor, pega tu API key y valida |
-| `/provider` | Cambia el proveedor por defecto (selector) |
-| `/model` | Elige el modelo por defecto (listado en vivo) |
-| `/sessions` | Retoma una sesión guardada |
-| `/help` o `/?` | Muestra la ayuda (también con la tecla `?`) |
-| `/quit` o `/exit` | Sale de forgen |
+## Contribuir
 
-**Atajos**: `Enter` envía · `Tab` cambia agente (build↔plan) · `?` ayuda ·
-`PgUp/PgDn` desplazan la conversación · `Ctrl+C` cancela la petición / sale.
-
-## Proveedores sin lock-in
-
-El núcleo no conoce proveedores. Cada proveedor es una entrada en la config:
-- `openai_compatible` — OpenAI, OpenRouter, vLLM, Ollama, Kimi, DeepSeek, etc.
-- `anthropic` — protocolo Messages nativo
-- `kimchi` — gateway gestionado de Kimchi
-
-## Multi-modelo (orquestación por roles)
-
-Asigna modelos por rol y por fase. Sin config, todo corre en un solo modelo.
-
-```yaml
-model_roles:
-  explorer: [openai/gpt-5-mini]
-  builder: [openai/gpt-5, anthropic/claude-sonnet-4-5]
-  reviewer: [anthropic/claude-sonnet-4-5]
-model_metadata:
-  anthropic/claude-sonnet-4-5: { tier: heavy }
-  openai/gpt-5-mini: { tier: light }
-```
-
-El orquestador clasifica cada tarea en una fase (explore/plan/build/review/research), elige el modelo por rol y escala a modelos `heavy` para tareas complejas. Cada petición lleva tags de fase/modelo para atribución de costos.
-
-## Proyectos multi-sesión (Ferment)
-
-```bash
-forgen ferment new "Build Tetris"   # crea un proyecto
-forgen ferment list                  # lista proyectos
-forgen ferment progress <id>         # progreso de fases/pasos
-forgen ferment switch <id>           # establece el proyecto activo
-forgen ferment export <id>           # exporta a JSON
-```
-
-El estado persiste con snapshot atómico + log de eventos append-only con hash encadenado: al reabrir `forgen`, el proyecto se rehidrata exactamente donde quedó.
-
-## Skills
-
-Las skills son directorios con un `SKILL.md` (frontmatter `name`/`description`):
-- Global: `~/.config/forgen/skills/<nombre>/SKILL.md`
-- Proyecto: `.forgen/skills/<nombre>/SKILL.md`
-
-El catálogo se inyecta al system prompt y el agente usa `read_skill` para leer el detalle.
-
-## MCP (Model Context Protocol)
-
-```yaml
-mcp_servers:
-  filesystem:
-    command: npx
-    args: ["-y", "@modelcontextprotocol/server-filesystem", "/ruta"]
-  # HTTP/SSE remoto
-  notion:
-    type: http
-    url: https://mcp.notion.com/mcp
-    headers:
-      Authorization: "Bearer ${NOTION_TOKEN}"
-  github:
-    type: sse
-    url: https://api.githubcopilot.com/mcp
-```
-
-Transportes: `stdio` (subproceso), `http` y `sse` (JSON-RPC 2.0). Las herramientas se exponen como `<server>_<tool>` (ej: `filesystem_read`, `github_list_prs`).
-
-```bash
-forgen mcp list                    # lista servidores
-forgen mcp add notion --type http --url https://mcp.notion.com/mcp
-forgen mcp test notion             # handshake + lista tools
-forgen mcp migrate                 # importa desde Claude Code (~/.claude.json), OpenCode, Cursor
-forgen doctor                      # muestra MCP servers configurados
-```
-
-Migración: en el primer arranque, `forgen` puede importar servidores de `Claude Code`, `OpenCode` y `Cursor` sin sobrescribir los existentes.
-
-## Herramientas integradas (agnósticas al lenguaje)
-
-`read`, `write`, `edit`, `glob`, `grep`, `bash`, `git_status`, `git_diff`, `web_fetch`, `web_search`. Todas construidas sobre puertos inyectables (testables sin tocar disco real).
-
-## Inteligencia de lenguaje (LSP)
-
-Si el language server del lenguaje está instalado, forgen expone herramientas de código con tipo:
-
-- `lsp_diagnostics` — errores y warnings del lenguaje
-- `lsp_hover` — documentación y tipo de un símbolo
-- `lsp_definition` / `lsp_references` — navegación
-- `lsp_rename` — renombrado seguro en todos los archivos
-
-Soportado: Go (`gopls`), TypeScript/JavaScript (`typescript-language-server`), Rust (`rust-analyzer`), Python (`pyright-langserver`). Las ediciones del agente se sincronizan al server automáticamente.
-
-## Búsqueda web
-
-```yaml
-search:
-  provider: brave
-  api_key_env: BRAVE_API_KEY
-```
-
-`web_search` usa la API de Brave; `web_fetch` descarga y extrae el texto de cualquier URL.
-
-## Uso y costos
-
-```bash
-forgen usage    # consumo de tokens por modelo
-```
-
-Cada llamada registra tokens de entrada/salida con fase y modelo (JSONL append-only).
-
-## UX y plataforma
-
-- **Theming**: paleta configurable en `theme:` (colores de la TUI).
-- **Diagnóstico**: `forgen trace` exporta un reporte markdown (sin secretos).
-- **Hooks de bash**: scripts ejecutables en `~/.config/forgen/hooks/bash/` (global) y `.forgen/hooks/bash/` (proyecto) que reescriben o bloquean comandos.
-- **Sandbox**: `execution.sandbox: docker` ejecuta `bash` en un contenedor aislado.
-- **Servidor JSON-RPC**: `forgen serve` expone `agent/run` sobre stdio para integrar con IDEs.
-- **Auditoría**: `forgen audit <session-id>`; `forgen sessions export/import` para mover sesiones entre máquinas.
-
-## Permisos
-
-- `auto` — ejecuta herramientas rutinarias; detecta y pregunta por comandos destructivos (`sudo`, `rm -rf /`, `dd`, `chmod 777`, fork bombs).
-- `on_request` — pregunta por herramientas sensibles (write/edit/bash).
-- `never` — solo lectura.
-
-## Desarrollo
+¿Quieres mejorar forgen? Gracias — así se empieza:
 
 ```bash
 make build      # compila a bin/forgen
-make test       # tests unitarios + integración
-make test-race  # con detector de carreras
-make vet        # go vet
 make fmt        # gofmt
-make lint       # golangci-lint
+make vet        # go vet
+make lint       # golangci-lint (si está instalado)
+make test       # unit + integración
+make test-race  # con -race
 ```
 
-## Arquitectura
+Convenciones: Go `gofmt`, commits tipo `feat:`, `fix:`, `docs:`, PRs pequeños y con tests. Ver `CONTRIBUTING.md` y `docs/ARCHITECTURE.md` (hexagonal: `core` → `application` → `adapters`).
 
-```
-cmd/forgen/             entry point
-internal/
-  core/domain/          entidades puras (sin dependencias)
-  core/ports/           interfaces (puertos del hexágono)
-  application/          casos de uso (runner, session, config, tools, permission)
-  adapters/in/          CLI (cobra) + TUI (bubbletea)
-  adapters/out/         LLM, fs, git, exec, storage, language
-  app/                  composition root (DI manual)
+Si no planeas contribuir código, abrir un issue con `forgen trace` ayuda mucho.
+
+## Tests
+
+```bash
+go test ./...                 # todo
+go test ./internal/adapters/in/tui -run TestHelpContent -v  # TUI
+go test -race ./...           # detector de carreras
 ```
 
-Los cambios fluyen hacia adentro: los casos de uso dependen solo de puertos; los adapters implementan puertos.
+Cobertura: `go test -cover ./...`
 
 ## Licencia
 
-Apache-2.0
+Apache-2.0 — ver [LICENSE](LICENSE).
+
+---
+
+Hecho con Go. Un binario, cero lock-in: cambia de modelo o proveedor editando `config.yaml`.
