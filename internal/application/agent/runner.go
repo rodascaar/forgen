@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/rodascaar/forgen/internal/application/session"
 	"github.com/rodascaar/forgen/internal/core/domain"
@@ -163,7 +164,7 @@ func (r *Runner) Run(ctx context.Context, input RunInput) (RunResult, error) {
 
 		// Ejecutar herramientas y recoger resultados.
 		assistantMessage := domain.NewAssistantWithToolCalls(response.text, response.toolCalls)
-		toolMessages, err := r.executeTools(ctx, input.Session.ID, input.Workspace, response.toolCalls)
+		toolMessages, err := r.executeTools(ctx, input.Session.ID, input.Workspace, input.Agent, response.toolCalls)
 		if err != nil {
 			return RunResult{}, err
 		}
@@ -195,10 +196,17 @@ type llmResponse struct {
 	usage         domain.Usage
 }
 
+// llmTimeout acota cada llamada al proveedor para que una API colgada no
+// deje el spinner girando indefinidamente ni bloquee la cancelación.
+const llmTimeout = 150 * time.Second
+
 func (r *Runner) callLLM(ctx context.Context, sessionID string, model domain.Model,
 	messages []domain.Message, tools []domain.Tool, phase domain.AgentPhase) (llmResponse, error) {
 	var response llmResponse
 	var mutex sync.Mutex
+
+	ctx, cancel := context.WithTimeout(ctx, llmTimeout)
+	defer cancel()
 
 	request := ports.ChatRequest{
 		Model:       model,
@@ -261,13 +269,13 @@ func (r *Runner) recordUsage(ctx context.Context, sessionID string, model domain
 }
 
 // executeTools decide permisos, ejecuta y construye los mensajes de resultado.
-func (r *Runner) executeTools(ctx context.Context, sessionID, workspace string,
+func (r *Runner) executeTools(ctx context.Context, sessionID, workspace string, agent domain.Agent,
 	calls []domain.ToolCall) ([]domain.Message, error) {
 	toolMessages := make([]domain.Message, 0, len(calls))
 
 	for _, call := range calls {
 		r.messenger.ToolStarted(sessionID, call)
-		result := r.executeWithPermission(ctx, sessionID, call)
+		result := r.executeWithPermission(ctx, sessionID, agent, call)
 		r.messenger.ToolFinished(sessionID, call, result)
 		r.logger.Info("tool.finished", "session", sessionID, "tool", call.Name,
 			"ok", result.OK, "error", errorString(result.Error))
@@ -276,7 +284,18 @@ func (r *Runner) executeTools(ctx context.Context, sessionID, workspace string,
 	return toolMessages, nil
 }
 
-func (r *Runner) executeWithPermission(ctx context.Context, sessionID string, call domain.ToolCall) domain.ToolResult {
+func (r *Runner) executeWithPermission(ctx context.Context, sessionID string, agent domain.Agent, call domain.ToolCall) domain.ToolResult {
+	// Red de seguridad del modo plan: aunque el LLM pidiera una herramienta
+	// mutadora, un agente de solo lectura nunca puede ejecutarla.
+	if agent.IsReadOnly && !readOnlyToolAllowlist[call.Name] {
+		return domain.ToolResult{
+			ToolCallID: call.ID,
+			OK:         false,
+			Output:     deniedResultMessage,
+			Error:      fmt.Errorf("%s: herramienta %q no permitida en modo plan", deniedResultMessage, call.Name),
+		}
+	}
+
 	decision, err := r.decider.Decide(ctx, sessionID, call)
 	if err != nil {
 		return domain.ToolResult{ToolCallID: call.ID, OK: false, Error: fmt.Errorf("decidir permiso: %w", err)}

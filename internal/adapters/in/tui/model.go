@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/common-nighthawk/go-figure"
 	apppkg "github.com/rodascaar/forgen/internal/app"
 	"github.com/rodascaar/forgen/internal/application/agent"
 	"github.com/rodascaar/forgen/internal/core/domain"
@@ -32,15 +33,17 @@ type transcriptLine struct {
 const slashHelpText = `Comandos: /init configura tu proveedor y API key · /help esta ayuda · /quit sale
 Atajos: Enter envía · Tab cambia agente · PgUp/PgDn o rueda del ratón desplazan · Ctrl+C cancela / salir (2×) · /todo /mcp /help`
 
-// grsprkLogo es la identidad ASCII de forgen (fuente block). Cada glifo ocupa
-// 8 celdas y se unen sin espacios para un rectángulo bien alineado. Se muestra
-// en el banner de inicio y en la ayuda, en el color de marca Lima ácida.
-const grsprkLogo = `███████╗██████╗ ██████╗ ██████╗ ███████╗███╗   ██╗
-██╔════╝██╔═══██╗██╔══██╗██╔════╝██╔════╝████╗  ██║
-█████╗  ██║   ██║██████╔╝██║  ███╗█████╗  ██╔██╗ ██║
-██╔══╝  ██║   ██║██╔══██╗██║   ██║██╔══╝  ██║╚██╗██║
-██║     ╚██████╔╝██║  ██║╚██████╔╝███████╗██║ ╚████║
-╚═╝     ╚═════╝ ╚═╝  ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═══╝`
+// grsprkLogo es la identidad ASCII de forgen (fuente block de go-figure, solo
+// ASCII: sin caracteres box-drawing que causaban artefactos/desalineación). Se
+// muestra en el banner de inicio y en la ayuda, en el color de marca Lima ácida.
+var grsprkLogo = renderForgenLogo()
+
+// renderForgenLogo genera el logotipo FORGEN con la librería go-figure (fuente
+// "block"). Se calcula una vez en init y se reutiliza.
+func renderForgenLogo() string {
+	f := figure.NewFigure("FORGEN", "block", true)
+	return strings.Trim(f.String(), "\n")
+}
 
 // quitConfirmMsg resetea la confirmación de salida tras un timeout.
 type quitConfirmMsg struct{}
@@ -72,6 +75,7 @@ type Model struct {
 	height          int
 	quitting        bool
 	cancelRun       context.CancelFunc
+	cancelRequested bool
 	noConfig        bool
 	scrollOffset    int
 	wizard          *wizardModel
@@ -387,12 +391,14 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.append("error", fmt.Sprintf("Error: %v", typedMessage.err))
 		m.resetConfirm()
 		m.running = false
+		m.cancelRequested = false
 		return m, nil
 
 	case finishedMsg:
 		m.flushAssistant()
 		m.resetConfirm()
 		m.running = false
+		m.cancelRequested = false
 		m.scrollOffset = 0
 		return m, nil
 
@@ -411,6 +417,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.resetConfirm()
 		m.running = false
+		m.cancelRequested = false
 		m.scrollOffset = 0
 		return m, nil
 
@@ -564,10 +571,15 @@ func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch message.String() {
 	case "ctrl+c", "alt+c":
 		if m.running {
-			if m.cancelRun != nil {
-				m.cancelRun()
+			// Cancelación idempotente: se pide una sola vez y no se acumulan
+			// mensajes ni se repite el cancel mientras el run termina de soltar.
+			if !m.cancelRequested {
+				m.cancelRequested = true
+				if m.cancelRun != nil {
+					m.cancelRun()
+				}
+				m.append("notice", "Cancelando petición...")
 			}
-			m.append("notice", "Cancelando petición...")
 			m.quitArmed = false
 			return m, nil
 		}
@@ -628,6 +640,7 @@ func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// nunca funcionan.
 		m.running = true
 		m.assistantBuffer = ""
+		m.cancelRequested = false
 		ctx, cancel := context.WithCancel(context.Background())
 		m.cancelRun = cancel
 		return m, m.startRun(ctx, prompt)
@@ -720,6 +733,20 @@ func (m Model) handleSlash(command string) (tea.Model, tea.Cmd) {
 		m.assistantBuffer = ""
 		m.cancelRun = cancel4
 		return m, m.startRun(ctx4, "Corrige automáticamente los errores de lint/test y valida con go vet")
+	case "/undo":
+		if m.sessionID == "" {
+			m.append("notice", "Sin sesión activa todavía.")
+			return m, nil
+		}
+		ok, err := m.app.UndoLast(context.Background(), m.sessionID)
+		if err != nil {
+			m.append("error", fmt.Sprintf("Error al revertir: %v", err))
+		} else if ok {
+			m.append("tool_done", "✓ Última iteración revertida (rollback interno).")
+		} else {
+			m.append("notice", "No hay checkpoint para revertir en esta sesión.")
+		}
+		return m, nil
 	case "/help", "/?":
 		m.helpOpen = true
 		return m, nil
@@ -937,15 +964,24 @@ func (m Model) startRun(ctx context.Context, prompt string) tea.Cmd {
 	return tea.Batch(runCommand, ticker)
 }
 
+// runTimeout acota todo el turno del agente como red de seguridad: si algo
+// quedara colgado pese a la cancelación por proceso/LLM, el spinner se apaga.
+const runTimeout = 10 * time.Minute
+
 // runAgent ejecuta un turno del agente en segundo plano.
 func runAgent(ctx context.Context, app *apppkg.App, sessionID, workspace, agentName, prompt string,
 	program *tea.Program) tea.Msg {
-	appConfig, err := app.LoadConfig(ctx)
+	// Red de seguridad anti-cuelgue: hereda la cancelación (Ctrl+C) y añade un
+	// tope global para que runDoneMsg siempre se emita y el spinner se apague.
+	runCtx, cancel := context.WithTimeout(ctx, runTimeout)
+	defer cancel()
+
+	appConfig, err := app.LoadConfig(runCtx)
 	if err != nil {
 		return runDoneMsg{err: err}
 	}
 
-	model, provider, phase, err := app.ResolveRunModel(ctx, prompt, "", "")
+	model, provider, phase, err := app.ResolveRunModel(runCtx, prompt, "", "")
 	if err != nil {
 		return runDoneMsg{err: err}
 	}
@@ -955,10 +991,14 @@ func runAgent(ctx context.Context, app *apppkg.App, sessionID, workspace, agentN
 	}
 
 	// Primera ejecución: crear la sesión.
-	session := loadOrCreateSessionTUI(ctx, app, sessionID, workspace, model, agentDef.Name)
+	session := loadOrCreateSessionTUI(runCtx, app, sessionID, workspace, model, agentDef.Name)
+	// Rollback interno: snapshot previo a un run de build (no read-only).
+	if !agentDef.IsReadOnly {
+		_, _ = app.SnapshotWorkspace(runCtx, workspace, session.ID)
+	}
 	messenger := newTUIMessenger(program)
 
-	runner, err := app.NewRunner(ctx, apppkg.RunnerDeps{
+	runner, err := app.NewRunner(runCtx, apppkg.RunnerDeps{
 		Provider:  provider,
 		Model:     model,
 		Agent:     agentDef,
@@ -970,7 +1010,7 @@ func runAgent(ctx context.Context, app *apppkg.App, sessionID, workspace, agentN
 	if err != nil {
 		return runDoneMsg{err: err}
 	}
-	result, err := runner.Run(ctx, agent.RunInput{
+	result, err := runner.Run(runCtx, agent.RunInput{
 		Session:    session,
 		Agent:      agentDef,
 		Workspace:  workspace,
@@ -980,7 +1020,7 @@ func runAgent(ctx context.Context, app *apppkg.App, sessionID, workspace, agentN
 	if err != nil {
 		return runDoneMsg{err: err}
 	}
-	_ = app.SessionService.Save(ctx, result.Session)
+	_ = app.SessionService.Save(runCtx, result.Session)
 	return runDoneMsg{err: nil, sessionID: result.Session.ID, modelKey: model.Key(), phase: string(phase)}
 }
 

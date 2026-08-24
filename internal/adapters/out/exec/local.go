@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/rodascaar/forgen/internal/core/ports"
 )
@@ -52,6 +54,19 @@ func (l *LocalExecutor) Execute(ctx context.Context, command, workdir string, en
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
+	// Ejecutar en un grupo de procesos propio para poder matar TODO el árbol
+	// (p.ej. `docker compose up` y sus hijos) al cancelar el contexto, y no
+	// dejar procesos huérfanos que mantengan abiertos stdout/stderr y cuelguen
+	// cmd.Run() indefinidamente.
+	if !isWindows() {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	}
+	cmd.Cancel = func() error {
+		return killProcessGroup(cmd)
+	}
+	// Si el proceso no muere tras la cancelación, no bloquear el caller.
+	cmd.WaitDelay = 2 * time.Second
+
 	err := cmd.Run()
 	result := ports.ExecResult{
 		Stdout:   stdout.String(),
@@ -63,6 +78,22 @@ func (l *LocalExecutor) Execute(ctx context.Context, command, workdir string, en
 		return result, fmt.Errorf("no se pudo ejecutar %q: %w", command, err)
 	}
 	return result, nil
+}
+
+// killProcessGroup envía SIGTERM y luego SIGKILL a todo el grupo de procesos
+// del comando (negativo del PID), de modo que los hijos (docker, etc.) también
+// mueran. En Windows usa taskkill /T /F.
+func killProcessGroup(cmd *exec.Cmd) error {
+	if cmd == nil || cmd.Process == nil {
+		return nil
+	}
+	if isWindows() {
+		return exec.Command("taskkill", "/PID", fmt.Sprint(cmd.Process.Pid), "/T", "/F").Run()
+	}
+	pgid := -cmd.Process.Pid
+	_ = syscall.Kill(pgid, syscall.SIGTERM)
+	time.Sleep(300 * time.Millisecond)
+	return syscall.Kill(pgid, syscall.SIGKILL)
 }
 
 func exitCode(err error) int {

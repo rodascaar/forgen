@@ -49,6 +49,7 @@ type App struct {
 	FermentService  *ferment.Service
 	TodoStore       ports.TodoStore
 	TaskStore       ports.TaskStore
+	Checkpoints     ports.CheckpointStore
 	TaskExecutor    ports.TaskExecutor
 	Git             ports.Git
 	UsageService    *usage.Service
@@ -105,6 +106,7 @@ func NewApp(logger *slog.Logger) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("crear task store: %w", err)
 	}
+	checkpointStore := storage.NewCheckpointStore(filepath.Join(paths.DataDir, "checkpoints"))
 	taskExecutor := taskadapter.NewExecutor(taskadapter.ExecutorDeps{
 		LLMFactory: llm.NewFactory(logger), Credentials: credentialStore,
 	}, taskStore)
@@ -245,6 +247,7 @@ func NewApp(logger *slog.Logger) (*App, error) {
 		UsageService:   usageService,
 		TodoStore:      todoStore,
 		TaskStore:      taskStore,
+		Checkpoints:    checkpointStore,
 		TaskExecutor:   taskExecutor,
 		Git:            gitCLI,
 		ToolRegistry:   registry,
@@ -534,6 +537,43 @@ func (a *App) SelectedAgent(appConfig domain.AppConfig, requested string) (domai
 		return agentDef, nil
 	}
 	return domain.Agent{}, fmt.Errorf("agente %q no encontrado (disponibles: build, plan)", name)
+}
+
+// SnapshotWorkspace crea un checkpoint previo a un run del agente (solo build)
+// y poda los checkpoints antiguos. Si no hay store, no-op.
+func (a *App) SnapshotWorkspace(ctx context.Context, workspace, sessionID string) (domain.Checkpoint, error) {
+	if a.Checkpoints == nil {
+		return domain.Checkpoint{}, nil
+	}
+	cp, err := a.Checkpoints.Create(ctx, workspace, sessionID)
+	if err == nil {
+		_ = a.Checkpoints.Prune(ctx, 10)
+	}
+	return cp, err
+}
+
+// UndoLast revierte la última iteración (checkpoint más reciente) de una sesión.
+// Devuelve false si no hay checkpoint disponible.
+func (a *App) UndoLast(ctx context.Context, sessionID string) (bool, error) {
+	if a.Checkpoints == nil {
+		return false, nil
+	}
+	list, err := a.Checkpoints.List(ctx, sessionID, 1)
+	if err != nil || len(list) == 0 {
+		return false, err
+	}
+	if err := a.Checkpoints.Restore(ctx, list[0].ID); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// ListCheckpoints devuelve los checkpoints de una sesión.
+func (a *App) ListCheckpoints(ctx context.Context, sessionID string, limit int) ([]domain.Checkpoint, error) {
+	if a.Checkpoints == nil {
+		return nil, nil
+	}
+	return a.Checkpoints.List(ctx, sessionID, limit)
 }
 
 func (a *App) loadPersistedRules(ctx context.Context) ([]domain.PermissionRule, error) {

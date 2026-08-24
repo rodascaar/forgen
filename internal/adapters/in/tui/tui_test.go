@@ -222,11 +222,11 @@ func TestIsRecommendation(t *testing.T) {
 func TestRenderLogoLines(t *testing.T) {
 	m := Model{styles: newStyles(domain.DefaultTheme())}
 	lines := m.renderLogoLines()
-	if len(lines) != 6 {
-		t.Fatalf("el logotipo debe tener 6 líneas, tengo %d", len(lines))
+	if len(lines) < 4 {
+		t.Fatalf("el logotipo debe tener al menos 4 líneas, tengo %d", len(lines))
 	}
-	// La N auténtica de la fuente hace la fila más ancha (>= 40 celdas).
-	if len(lines[0]) < 40 {
+	// El logotipo FORGEN generado debe ser lo bastante ancho para leerse.
+	if len(lines[0]) < 30 {
 		t.Fatalf("el logotipo parece truncado: %d celdas en la fila 1", len(lines[0]))
 	}
 	for _, line := range lines {

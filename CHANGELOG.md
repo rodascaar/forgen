@@ -4,6 +4,20 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-1.1.0/) y
 el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 
+## [0.1.13] - 2026-08-24
+
+### Añadido
+
+- **Rollback interno (checkpoints)**: snapshot del workspace antes de cada run de build (`FORGEN_DATA_DIR/checkpoints/<session>/<run>/`), con `/undo` en la TUI y `forgen undo` / `forgen checkpoints list` en la CLI para revertir iteraciones fallidas sin depender de Git manual.
+- **Banner FORGEN generado con go-figure** (fuente "block" solo ASCII): elimina los artefactos/desalineación de los caracteres box-drawing.
+
+### Cambiado
+
+- **Modo plan (red de seguridad)**: guard a nivel de ejecución en el runner — un agente de solo lectura nunca ejecuta una herramienta fuera del allowlist, aunque el LLM la pidiera.
+- **Control de procesos**: los comandos (`docker compose up`, etc.) se ejecutan en su propio grupo de procesos y, al cancelar, se mata todo el árbol (SIGTERM→SIGKILL). Ctrl+C es idempotente (una sola vez, sin acumular "Cancelando petición...").
+- **Spinner acoplado al ciclo de vida**: timeout por llamada LLM (150s) y timeout global del turno (10min) para que el spinner se apague siempre; se garantiza `runDoneMsg` en cada finalización/cancelación.
+- **Prompts (Fase 2)**: el agente build ahora exige aplicar TODOS los requisitos (no solo nombres) y comprobar el estado actual (docker ps, git status) antes de arrancar servicios para evitar redundancia/bloqueos.
+
 ## [0.1.12] - 2026-08-24
 
 ### Añadido
@@ -138,6 +152,7 @@ el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 - **Validación/listado de modelos con timeout (15s)**: el paso "Validando..." y
   el listado en vivo de `/model` no se quedan colgados si el proveedor tarda.
 
+[0.1.13]: https://github.com/rodascaar/forgen/releases/tag/v0.1.13
 [0.1.12]: https://github.com/rodascaar/forgen/releases/tag/v0.1.12
 [0.1.11]: https://github.com/rodascaar/forgen/releases/tag/v0.1.11
 [0.1.10]: https://github.com/rodascaar/forgen/releases/tag/v0.1.10
