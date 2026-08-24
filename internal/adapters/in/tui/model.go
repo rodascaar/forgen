@@ -32,14 +32,15 @@ type transcriptLine struct {
 const slashHelpText = `Comandos: /init configura tu proveedor y API key · /help esta ayuda · /quit sale
 Atajos: Enter envía · Tab cambia agente · PgUp/PgDn o rueda del ratón desplazan · Ctrl+C cancela / salir (2×) · /todo /mcp /help`
 
-// grsprkLogo es la identidad ASCII de forgen (fuente block). Se muestra en el
-// banner de inicio y en la ayuda, en el color de marca Lima ácida.
-const grsprkLogo = `███████╗  ██████╗   ██████╗   ██████╗   ███████╗  ███╗   ██╗
-██╔════╝  ██╔═══██╗  ██╔══██╗  ██╔════╝  ██╔════╝  ████╗  ██║
-█████╗    ██║   ██║  ██████╔╝  ██║  ███╗  █████╗    ██╔██╗ ██║
-██╔══╝    ██║   ██║  ██╔══██╗  ██║   ██║  ██╔══╝    ██║╚██╗██║
-██║      ╚██████╔╝  ██║  ██║  ╚██████╔╝  ███████╗  ██║ ╚████║
-╚═╝      ╚═════╝   ╚═╝  ╚═╝  ╚═════╝   ╚══════╝  ╚═╝  ╚═══╝`
+// grsprkLogo es la identidad ASCII de forgen (fuente block). Cada glifo ocupa
+// 8 celdas y se unen sin espacios para un rectángulo bien alineado. Se muestra
+// en el banner de inicio y en la ayuda, en el color de marca Lima ácida.
+const grsprkLogo = `███████╗██████╗ ██████╗ ██████╗ ███████╗███╗ ██╗
+██╔════╝██╔═══██╗██╔══██╗██╔════╝██╔════╝████╗██║
+█████╗  ██║   ██║██████╔╝██║  ███╗█████╗  ██╔██╗██║
+██╔══╝  ██║   ██║██╔══██╗██║   ██║██╔══╝  ██║╚██╗██║
+██║     ╚██████╔╝██║  ██║╚██████╔╝███████╗██║ ╚██║
+╚═╝     ╚═════╝ ╚═╝  ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═╝`
 
 // quitConfirmMsg resetea la confirmación de salida tras un timeout.
 type quitConfirmMsg struct{}
@@ -1074,17 +1075,30 @@ func (m Model) wrappedLines() []string {
 func (m Model) wrap(width int, kind, text string) []string {
 	if kind == "logo" {
 		// El logotipo se pinta en el color de marca sin ajuste de línea.
-		return strings.Split(m.styles.accent.Render(text), "\n")
+		return m.renderLogoLines()
 	}
 	styled := m.styles.forKind(kind).MaxWidth(width).Render(text)
 	return strings.Split(styled, "\n")
 }
 
+// renderLogoLines devuelve el logotipo FORGEN, cada línea con su propio color
+// de marca #A6D93B (TrueColor) y RESET al final, para que no haya fugas de
+// color ni desalineación entre líneas.
+func (m Model) renderLogoLines() []string {
+	raw := strings.Split(strings.TrimRight(grsprkLogo, "\n"), "\n")
+	out := make([]string, len(raw))
+	for i, line := range raw {
+		out[i] = m.styles.brand.Render(strings.TrimRight(line, " "))
+	}
+	return out
+}
+
 // renderHelp muestra el overlay de ayuda en pantalla completa.
 func (m Model) renderHelp() string {
-	lines := []string{
-		m.styles.accent.Render(grsprkLogo),
-		m.styles.accent.Render("FORGEN — ayuda rápida"),
+	lines := make([]string, 0, 24)
+	lines = append(lines, m.renderLogoLines()...)
+	lines = append(lines,
+		m.styles.brand.Render("FORGEN — ayuda rápida"),
 		"",
 		"Escribir es siempre seguro: ninguna letra sola abre menús. Usa /comandos o Ctrl+atajos.",
 		"",
@@ -1122,7 +1136,7 @@ func (m Model) renderHelp() string {
 		"(OpenAI, Anthropic, OpenRouter, Groq, Ollama y más). Solo necesitas tu API key.",
 		"",
 		m.styles.dim.Render("(Esc o q para cerrar ayuda)"),
-	}
+	)
 	return strings.Join(lines, "\n")
 }
 

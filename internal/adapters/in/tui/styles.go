@@ -16,6 +16,9 @@ type Styles struct {
 	err       lipgloss.Style
 	accent    lipgloss.Style
 	dim       lipgloss.Style
+	// brand es el color de marca forgen (Lima ácida #A6D93B), fijo e
+	// independiente del tema del usuario. Se usa para el logotipo.
+	brand lipgloss.Style
 }
 
 // newStyles construye los estilos desde un tema.
@@ -29,6 +32,9 @@ func newStyles(theme domain.Theme) Styles {
 		err:       lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Error)).Bold(true),
 		accent:    lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Accent)).Bold(true),
 		dim:       lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Dim)),
+		// Hex #A6D93B == TrueColor 38;2;166;217;59 (Lima ácida). Emite el ANSI
+		// 24-bit exacto cuando el terminal lo soporta.
+		brand: lipgloss.NewStyle().Foreground(lipgloss.Color("#A6D93B")),
 	}
 }
 

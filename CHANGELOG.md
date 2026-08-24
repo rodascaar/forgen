@@ -4,6 +4,12 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-1.1.0/) y
 el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 
+## [0.1.11] - 2026-08-24
+
+### Corregido
+
+- **Banner FORGEN**: el logotipo ahora usa un color de marca fijo `#A6D93B` (TrueColor `38;2;166;217;59`) independiente del tema del usuario — antes salía lila/morado porque tomaba `accent` del config (`#bb9af7`). Se renderiza línea por línea con RESET `\x1b[0m` al final de cada una (sin fugas de color) y el bloque ASCII quedó con ancho uniforme (8 celdas por glifo) para eliminar la desalineación ("dientes").
+
 ## [0.1.10] - 2026-08-24
 
 ### Añadido
@@ -122,6 +128,7 @@ el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 - **Validación/listado de modelos con timeout (15s)**: el paso "Validando..." y
   el listado en vivo de `/model` no se quedan colgados si el proveedor tarda.
 
+[0.1.11]: https://github.com/rodascaar/forgen/releases/tag/v0.1.11
 [0.1.10]: https://github.com/rodascaar/forgen/releases/tag/v0.1.10
 [0.1.9]: https://github.com/rodascaar/forgen/releases/tag/v0.1.9
 [0.1.8]: https://github.com/rodascaar/forgen/releases/tag/v0.1.8
