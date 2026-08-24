@@ -20,11 +20,15 @@ func NewJSONLTaskStore(filePath string) (*JSONLTaskStore, error) {
 	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
 		return nil, err
 	}
-	if _, err := os.OpenFile(filePath, os.O_CREATE|os.O_RDWR, 0o600); err != nil {
+	f, err := os.OpenFile(filePath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
 		return nil, err
 	}
+	_ = f.Close()
 	return &JSONLTaskStore{filePath: filePath}, nil
 }
+
+func (s *JSONLTaskStore) Close() error { return nil }
 
 func (s *JSONLTaskStore) Save(ctx context.Context, task *domain.Task) error {
 	s.mu.Lock()

@@ -189,13 +189,28 @@ func (a *App) LoadConfig(ctx context.Context) (domain.AppConfig, error) {
 	return a.ConfigService.Load(ctx)
 }
 
-// Close libera los recursos externos (servidores MCP y LSP).
+// Close libera todos los recursos externos.
 func (a *App) Close() {
 	if a.MCP != nil {
 		a.MCP.Close()
 	}
 	if a.LSP != nil {
 		a.LSP.Close()
+	}
+	if a.TodoStore != nil {
+		if c, ok := a.TodoStore.(interface{ Close() error }); ok {
+			_ = c.Close()
+		}
+	}
+	if a.TaskStore != nil {
+		if c, ok := a.TaskStore.(interface{ Close() error }); ok {
+			_ = c.Close()
+		}
+	}
+	if a.TaskExecutor != nil {
+		if c, ok := a.TaskExecutor.(interface{ Close() error }); ok {
+			_ = c.Close()
+		}
 	}
 }
 

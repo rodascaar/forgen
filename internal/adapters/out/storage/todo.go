@@ -20,11 +20,15 @@ func NewJSONLTodoStore(filePath string) (*JSONLTodoStore, error) {
 	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
 		return nil, err
 	}
-	if _, err := os.OpenFile(filePath, os.O_CREATE|os.O_RDWR, 0o600); err != nil {
+	f, err := os.OpenFile(filePath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
 		return nil, err
 	}
+	_ = f.Close()
 	return &JSONLTodoStore{filePath: filePath}, nil
 }
+
+func (s *JSONLTodoStore) Close() error { return nil }
 
 func (s *JSONLTodoStore) Load(ctx context.Context, id string) (*domain.TodoList, error) {
 	s.mu.RLock()
