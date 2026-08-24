@@ -547,7 +547,7 @@ func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.append("notice", "Salida cancelada")
 			return m, nil
 		}
-		break
+		return m, nil
 
 	case "ctrl+p", "alt+p":
 		m.quitArmed = false
