@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/rodascaar/forgen/internal/core/ports"
@@ -58,9 +57,7 @@ func (l *LocalExecutor) Execute(ctx context.Context, command, workdir string, en
 	// (p.ej. `docker compose up` y sus hijos) al cancelar el contexto, y no
 	// dejar procesos huérfanos que mantengan abiertos stdout/stderr y cuelguen
 	// cmd.Run() indefinidamente.
-	if !isWindows() {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	}
+	setProcessGroup(cmd)
 	cmd.Cancel = func() error {
 		return killProcessGroup(cmd)
 	}
@@ -78,22 +75,6 @@ func (l *LocalExecutor) Execute(ctx context.Context, command, workdir string, en
 		return result, fmt.Errorf("no se pudo ejecutar %q: %w", command, err)
 	}
 	return result, nil
-}
-
-// killProcessGroup envía SIGTERM y luego SIGKILL a todo el grupo de procesos
-// del comando (negativo del PID), de modo que los hijos (docker, etc.) también
-// mueran. En Windows usa taskkill /T /F.
-func killProcessGroup(cmd *exec.Cmd) error {
-	if cmd == nil || cmd.Process == nil {
-		return nil
-	}
-	if isWindows() {
-		return exec.Command("taskkill", "/PID", fmt.Sprint(cmd.Process.Pid), "/T", "/F").Run()
-	}
-	pgid := -cmd.Process.Pid
-	_ = syscall.Kill(pgid, syscall.SIGTERM)
-	time.Sleep(300 * time.Millisecond)
-	return syscall.Kill(pgid, syscall.SIGKILL)
 }
 
 func exitCode(err error) int {
