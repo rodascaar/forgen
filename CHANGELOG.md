@@ -4,6 +4,16 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-1.1.0/) y
 el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 
+## [0.1.12] - 2026-08-24
+
+### Añadido
+
+- **Modo plan recomienda la mejor opción**: el agente plan presenta 2-3 enfoques con tradeoffs y marca la recomendación con `✅ Recomendación:` justificada con la evidencia investigada. En la TUI esa línea se resalta en el color de marca (`internal/core/domain/session.go`, `internal/adapters/in/tui/model.go`).
+
+### Corregido
+
+- **N del logotipo FORGEN**: se restaura la N auténtica de la fuente block (11 celdas), eliminando la distorsión que introducía la versión comprimida a 8 celdas.
+
 ## [0.1.11] - 2026-08-24
 
 ### Corregido
@@ -128,6 +138,7 @@ el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 - **Validación/listado de modelos con timeout (15s)**: el paso "Validando..." y
   el listado en vivo de `/model` no se quedan colgados si el proveedor tarda.
 
+[0.1.12]: https://github.com/rodascaar/forgen/releases/tag/v0.1.12
 [0.1.11]: https://github.com/rodascaar/forgen/releases/tag/v0.1.11
 [0.1.10]: https://github.com/rodascaar/forgen/releases/tag/v0.1.10
 [0.1.9]: https://github.com/rodascaar/forgen/releases/tag/v0.1.9

@@ -35,12 +35,12 @@ Atajos: Enter envía · Tab cambia agente · PgUp/PgDn o rueda del ratón despla
 // grsprkLogo es la identidad ASCII de forgen (fuente block). Cada glifo ocupa
 // 8 celdas y se unen sin espacios para un rectángulo bien alineado. Se muestra
 // en el banner de inicio y en la ayuda, en el color de marca Lima ácida.
-const grsprkLogo = `███████╗██████╗ ██████╗ ██████╗ ███████╗███╗ ██╗
-██╔════╝██╔═══██╗██╔══██╗██╔════╝██╔════╝████╗██║
-█████╗  ██║   ██║██████╔╝██║  ███╗█████╗  ██╔██╗██║
+const grsprkLogo = `███████╗██████╗ ██████╗ ██████╗ ███████╗███╗   ██╗
+██╔════╝██╔═══██╗██╔══██╗██╔════╝██╔════╝████╗  ██║
+█████╗  ██║   ██║██████╔╝██║  ███╗█████╗  ██╔██╗ ██║
 ██╔══╝  ██║   ██║██╔══██╗██║   ██║██╔══╝  ██║╚██╗██║
-██║     ╚██████╔╝██║  ██║╚██████╔╝███████╗██║ ╚██║
-╚═╝     ╚═════╝ ╚═╝  ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═╝`
+██║     ╚██████╔╝██║  ██║╚██████╔╝███████╗██║ ╚████║
+╚═╝     ╚═════╝ ╚═╝  ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═══╝`
 
 // quitConfirmMsg resetea la confirmación de salida tras un timeout.
 type quitConfirmMsg struct{}
@@ -1064,6 +1064,11 @@ func (m Model) wrappedLines() []string {
 	}
 	var lines []string
 	for _, line := range m.transcript {
+		if line.kind == "assistant" && isRecommendation(line.text) {
+			// La recomendación del plan se resalta en el color de marca.
+			lines = append(lines, strings.Split(m.styles.brand.Render(line.text), "\n")...)
+			continue
+		}
 		lines = append(lines, m.wrap(width, line.kind, line.text)...)
 	}
 	if m.assistantBuffer != "" {
@@ -1208,6 +1213,23 @@ func (m *Model) flushAssistant() {
 
 func (m *Model) append(kind, text string) {
 	m.transcript = append(m.transcript, transcriptLine{kind: kind, text: text})
+}
+
+// isRecommendation indica si una línea del asistente corresponde a la
+// recomendación del modo plan (marcada por el agente como "✅ Recomendación:").
+// Se resalta en el color de marca en la TUI.
+func isRecommendation(text string) bool {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	if strings.Contains(lower, "✅ recomendación") {
+		return true
+	}
+	if strings.HasPrefix(lower, "recomendación:") ||
+		strings.HasPrefix(lower, "recomendado:") ||
+		strings.HasPrefix(lower, "recomendada:") ||
+		strings.HasPrefix(lower, "recomendacion:") {
+		return true
+	}
+	return false
 }
 
 func summarize(text string) string {

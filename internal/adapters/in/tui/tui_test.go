@@ -189,6 +189,53 @@ func TestMouseWheelScroll(t *testing.T) {
 	}
 }
 
+// --- Recomendación del modo plan ---
+
+func TestIsRecommendation(t *testing.T) {
+	positive := []string{
+		"✅ Recomendación: Opción B",
+		"Recomendación: refactorizar en módulos",
+		"Recomendado: usar la opción 2",
+		"Recomendada: la alternativa A",
+		"recomendacion: enfoque hibrido",
+	}
+	negative := []string{
+		"Explorando el proyecto...",
+		"Opciones: A, B y C",
+		"La opción B no se recomienda aquí",
+		"verificación: go test ./...",
+	}
+	for _, text := range positive {
+		if !isRecommendation(text) {
+			t.Errorf("isRecommendation(%q) = false, quiero true", text)
+		}
+	}
+	for _, text := range negative {
+		if isRecommendation(text) {
+			t.Errorf("isRecommendation(%q) = true, quiero false", text)
+		}
+	}
+}
+
+// --- Logo FORGEN ---
+
+func TestRenderLogoLines(t *testing.T) {
+	m := Model{styles: newStyles(domain.DefaultTheme())}
+	lines := m.renderLogoLines()
+	if len(lines) != 6 {
+		t.Fatalf("el logotipo debe tener 6 líneas, tengo %d", len(lines))
+	}
+	// La N auténtica de la fuente hace la fila más ancha (>= 40 celdas).
+	if len(lines[0]) < 40 {
+		t.Fatalf("el logotipo parece truncado: %d celdas en la fila 1", len(lines[0]))
+	}
+	for _, line := range lines {
+		if line == "" {
+			t.Fatalf("el logotipo tiene una línea vacía")
+		}
+	}
+}
+
 // --- Permission detail ---
 
 func TestPermissionDetail(t *testing.T) {
