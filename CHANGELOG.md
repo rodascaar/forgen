@@ -4,6 +4,20 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-1.1.0/) y
 el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 
+## [0.1.10] - 2026-08-24
+
+### Añadido
+
+- **Identidad FORGEN (ASCII block)**: logotipo FORGEN en color de marca Lima ácida (`#A6D93B`) en el banner de inicio de la TUI y en la pantalla de ayuda (`internal/adapters/in/tui/model.go`).
+
+### Cambiado
+
+- **Modo plan estrictamente de solo lectura**: `visibleTools` ahora usa un allowlist de herramientas de lectura/exploración (`read`, `glob`, `grep`, `git_status`, `git_diff`, `read_skill`, `web_fetch`, `web_search`, LSP de lectura). El agente plan ya no puede `bash`, `write`, `edit`, `apply_patch`, `task` (sub-agentes build), `lsp_rename`, `todo` ni `mcp_*`. `DeniedTools` ampliado y `SystemPrompt` aclarado en `internal/core/domain/session.go`.
+
+### Corregido
+
+- **El modo plan ya no construye/modifica**: antes podía lanzar sub-agentes `build` vía `task` o aplicar cambios con `apply_patch`/`lsp_rename`; ahora solo puede investigar (leer logs, buscar en la web) y devolver un plan.
+
 ## [0.1.9] - 2026-08-24
 
 ### Añadido
@@ -108,6 +122,7 @@ el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 - **Validación/listado de modelos con timeout (15s)**: el paso "Validando..." y
   el listado en vivo de `/model` no se quedan colgados si el proveedor tarda.
 
+[0.1.10]: https://github.com/rodascaar/forgen/releases/tag/v0.1.10
 [0.1.9]: https://github.com/rodascaar/forgen/releases/tag/v0.1.9
 [0.1.8]: https://github.com/rodascaar/forgen/releases/tag/v0.1.8
 [0.1.7]: https://github.com/rodascaar/forgen/releases/tag/v0.1.7

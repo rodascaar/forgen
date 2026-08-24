@@ -333,3 +333,67 @@ type allowAllDecider struct{}
 func (allowAllDecider) Decide(_ context.Context, _ string, _ domain.ToolCall) (domain.Decision, error) {
 	return domain.Decision{Allowed: true, Level: domain.PermissionAuto, Reason: "test"}, nil
 }
+
+// TestReadOnlyAgentSeesOnlyReadOnlyTools verifica que el agente plan (read-only)
+// solo recibe herramientas de lectura/exploración, y nunca herramientas que
+// puedan modificar el sistema (write, edit, bash, apply_patch, task, lsp_rename,
+// todo) aunque el proveedor las pidiera.
+func TestReadOnlyAgentSeesOnlyReadOnlyTools(t *testing.T) {
+	var toolsSeen []domain.Tool
+	provider := &fakeProvider{streamFn: func(ctx context.Context, request ports.ChatRequest, handler ports.StreamHandler) error {
+		toolsSeen = request.Tools
+		if err := handler(ports.TextDeltaEvent{Text: "plan listo"}); err != nil {
+			return err
+		}
+		return handler(ports.DoneEvent{Reason: domain.FinishReasonStop})
+	}}
+
+	fileSystem := fs.New(t.TempDir())
+	registry := tools.NewRegistry(fileSystem, nilExecutor{}, nilGit{}, 1000)
+	sessions := session.NewService(newMemorySessionStore())
+	runner, err := agent.NewRunner(agent.Options{
+		Provider:      provider,
+		Tools:         registry,
+		Decider:       allowAllDecider{},
+		Responder:     allowResponder{},
+		Messenger:     &recordingMessenger{},
+		Sessions:      sessions,
+		SystemPrompt:  func(ctx context.Context) (string, error) { return "system", nil },
+		MaxIterations: 5,
+		Logger:        slog.Default(),
+	})
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
+
+	planAgent, ok := domain.FindAgent(domain.BuiltinAgents(), "plan")
+	if !ok || !planAgent.IsReadOnly {
+		t.Fatalf("el agente plan debería existir y ser read-only")
+	}
+
+	_, err = runner.Run(context.Background(), agent.RunInput{
+		Session:    domain.Session{ID: "s5", Workspace: "/tmp", Model: domain.Model{Provider: "fake", ID: "m"}},
+		Agent:      planAgent,
+		Workspace:  "/tmp",
+		UserPrompt: "plan",
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	seen := make(map[string]bool, len(toolsSeen))
+	for _, tool := range toolsSeen {
+		seen[tool.Name] = true
+	}
+
+	for _, mutating := range []string{"write", "edit", "bash", "apply_patch", "task", "lsp_rename", "todo"} {
+		if seen[mutating] {
+			t.Fatalf("el agente plan NO debería ver la herramienta %q", mutating)
+		}
+	}
+	for _, readOnly := range []string{"read", "glob", "grep", "git_status", "git_diff"} {
+		if !seen[readOnly] {
+			t.Fatalf("el agente plan debería ver la herramienta de lectura %q", readOnly)
+		}
+	}
+}

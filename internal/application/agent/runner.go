@@ -305,18 +305,41 @@ func (r *Runner) executeWithPermission(ctx context.Context, sessionID string, ca
 	return r.tools.Execute(ctx, call)
 }
 
+// readOnlyToolAllowlist es el conjunto de herramientas permitidas a los
+// agentes de solo lectura (modo plan): solo lectura/exploración e investigación
+// (logs, búsqueda en la web, git status/diff y LSP de lectura). Cualquier
+// herramienta capaz de modificar archivos, estado o lanzar sub-agentes
+// (task, write, edit, bash, apply_patch, lsp_rename, todo, mcp_*) queda fuera.
+var readOnlyToolAllowlist = map[string]bool{
+	"read":                  true,
+	"glob":                  true,
+	"grep":                  true,
+	"git_status":            true,
+	"git_diff":              true,
+	"read_skill":            true,
+	"web_fetch":             true,
+	"web_search":            true,
+	"lsp_diagnostics":       true,
+	"lsp_hover":             true,
+	"lsp_implementation":    true,
+	"lsp_type_definition":   true,
+	"lsp_document_symbols":  true,
+	"lsp_workspace_symbols": true,
+	"lsp_code_action":       true,
+	"lsp_completion":        true,
+}
+
 // visibleTools filtra las herramientas según el agente.
 func (r *Runner) visibleTools(agent domain.Agent) []domain.Tool {
+	available := r.tools.ListTools()
 	if agent.IsReadOnly {
-		// El agente de solo lectura no ve herramientas de escritura/ejecución.
-		available := r.tools.ListTools()
+		// Modo plan: solo herramientas del allowlist de lectura. Nada de
+		// escribir, ejecutar, lanzar sub-agentes ni renombrar (lsp_rename).
 		readOnly := make([]domain.Tool, 0, len(available))
 		for _, tool := range available {
-			switch tool.Name {
-			case "write", "edit", "bash":
-				continue
+			if readOnlyToolAllowlist[tool.Name] {
+				readOnly = append(readOnly, tool)
 			}
-			readOnly = append(readOnly, tool)
 		}
 		return readOnly
 	}

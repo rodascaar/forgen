@@ -32,6 +32,15 @@ type transcriptLine struct {
 const slashHelpText = `Comandos: /init configura tu proveedor y API key · /help esta ayuda · /quit sale
 Atajos: Enter envía · Tab cambia agente · PgUp/PgDn o rueda del ratón desplazan · Ctrl+C cancela / salir (2×) · /todo /mcp /help`
 
+// grsprkLogo es la identidad ASCII de forgen (fuente block). Se muestra en el
+// banner de inicio y en la ayuda, en el color de marca Lima ácida.
+const grsprkLogo = `███████╗  ██████╗   ██████╗   ██████╗   ███████╗  ███╗   ██╗
+██╔════╝  ██╔═══██╗  ██╔══██╗  ██╔════╝  ██╔════╝  ████╗  ██║
+█████╗    ██║   ██║  ██████╔╝  ██║  ███╗  █████╗    ██╔██╗ ██║
+██╔══╝    ██║   ██║  ██╔══██╗  ██║   ██║  ██╔══╝    ██║╚██╗██║
+██║      ╚██████╔╝  ██║  ██║  ╚██████╔╝  ███████╗  ██║ ╚████║
+╚═╝      ╚═════╝   ╚═╝  ╚═╝  ╚═════╝   ╚══════╝  ╚═╝  ╚═══╝`
+
 // quitConfirmMsg resetea la confirmación de salida tras un timeout.
 type quitConfirmMsg struct{}
 
@@ -113,6 +122,10 @@ func newModel(app *apppkg.App) Model {
 // prepara la barra de estado y el mensaje de onboarding. Los mensajes se anexan
 // al transcript; como se invoca construyendo el modelo (no en Init), persisten.
 func (m *Model) loadConfigInto() {
+	// Identidad: logotipo en color de marca al arrancar la TUI.
+	m.append("logo", grsprkLogo)
+	m.append("notice", "forgen — agente de desarrollo · plan investiga (no modifica) · build implementa")
+
 	appConfig, err := m.app.LoadConfig(context.Background())
 	if err != nil {
 		m.append("error", fmt.Sprintf("config: %v", err))
@@ -1059,6 +1072,10 @@ func (m Model) wrappedLines() []string {
 }
 
 func (m Model) wrap(width int, kind, text string) []string {
+	if kind == "logo" {
+		// El logotipo se pinta en el color de marca sin ajuste de línea.
+		return strings.Split(m.styles.accent.Render(text), "\n")
+	}
 	styled := m.styles.forKind(kind).MaxWidth(width).Render(text)
 	return strings.Split(styled, "\n")
 }
@@ -1066,7 +1083,8 @@ func (m Model) wrap(width int, kind, text string) []string {
 // renderHelp muestra el overlay de ayuda en pantalla completa.
 func (m Model) renderHelp() string {
 	lines := []string{
-		m.styles.accent.Render("forgen — ayuda rápida"),
+		m.styles.accent.Render(grsprkLogo),
+		m.styles.accent.Render("FORGEN — ayuda rápida"),
 		"",
 		"Escribir es siempre seguro: ninguna letra sola abre menús. Usa /comandos o Ctrl+atajos.",
 		"",

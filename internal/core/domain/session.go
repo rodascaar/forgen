@@ -44,8 +44,8 @@ func BuiltinAgents() []Agent {
 			Name:         "plan",
 			Description:  "Agente de análisis y exploración de solo lectura.",
 			IsReadOnly:   true,
-			SystemPrompt: "Eres forgen en modo plan. Solo puedes analizar y explorar el código: leer, buscar y revisar. No puedes escribir archivos ni ejecutar comandos que modifiquen el sistema. Produce un análisis claro con hallazgos y recomendaciones.",
-			DeniedTools:  []string{"write", "edit", "bash"},
+			SystemPrompt: "Eres forgen en modo plan. Solo puedes ANALIZAR y EXPLORAR: leer archivos y logs, buscar (glob/grep), consultar git status/diff, navegar la web (web_fetch/web_search) y usar LSP de lectura. NO puedes modificar nada: no escribas ni edites archivos, no ejecutes comandos, no apliques patches, no renombres símbolos ni lances sub-agentes. Produce un plan/ análisis claro con hallazgos y recomendaciones; deja la implementación para el modo build.",
+			DeniedTools:  []string{"write", "edit", "bash", "apply_patch", "task", "lsp_rename", "todo"},
 		},
 	}
 }
