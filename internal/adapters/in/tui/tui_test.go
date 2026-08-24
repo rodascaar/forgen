@@ -77,13 +77,13 @@ func TestPickerEscCancels(t *testing.T) {
 
 func TestSlashRouting(t *testing.T) {
 	cases := map[string]string{
-		"/init":   "/init",
-		"/help":   "/help",
-		"/?":      "/help",
-		"/quit":   "/quit",
-		"/exit":   "/quit",
+		"/init":     "/init",
+		"/help":     "/help",
+		"/?":        "/help",
+		"/quit":     "/quit",
+		"/exit":     "/quit",
 		"/provider": "/provider",
-		"/model":  "/model",
+		"/model":    "/model",
 		"/sessions": "/sessions",
 	}
 	for input, want := range cases {

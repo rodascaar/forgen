@@ -30,7 +30,7 @@ func NewTool(store ports.TodoStore) tools.ToolDef {
 					"items": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
-							"content":     map[string]any{"type": "string", "description": "Descripción breve de la tarea"},
+							"content":    map[string]any{"type": "string", "description": "Descripción breve de la tarea"},
 							"status":     map[string]any{"type": "string", "enum": []string{"pending", "in_progress", "completed", "cancelled"}},
 							"activeForm": map[string]any{"type": "string", "description": "Forma activa/gerundio, ej 'Creando archivo X'"},
 						},

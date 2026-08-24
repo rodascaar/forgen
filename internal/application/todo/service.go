@@ -33,7 +33,9 @@ func (s *Service) GetList(ctx context.Context, id string) (*domain.TodoList, err
 	return list, nil
 }
 func (s *Service) DeleteList(ctx context.Context, id string) error { return s.store.Delete(ctx, id) }
-func (s *Service) ListLists(ctx context.Context) ([]*domain.TodoList, error) { return s.store.List(ctx) }
+func (s *Service) ListLists(ctx context.Context) ([]*domain.TodoList, error) {
+	return s.store.List(ctx)
+}
 func (s *Service) AddTodo(ctx context.Context, listID, content, activeForm string) (*domain.Todo, error) {
 	list, err := s.store.Load(ctx, listID)
 	if err != nil {

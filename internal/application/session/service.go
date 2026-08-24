@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/rodascaar/forgen/internal/core/domain"
 	"github.com/rodascaar/forgen/internal/core/ports"
-	"github.com/google/uuid"
 )
 
 // Service gestiona el ciclo de vida de las sesiones.

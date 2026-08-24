@@ -56,5 +56,7 @@ Ejecuta 'forgen' sin argumentos para la interfaz interactiva.`,
 	root.AddCommand(newVersionCommand())
 	root.AddCommand(newTodoCommand(app))
 	root.AddCommand(newTaskCommand(app))
+	root.AddCommand(newMCPCommand(app))
+	root.AddCommand(newPermissionsCommand(app))
 	return root, nil
 }

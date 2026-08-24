@@ -35,10 +35,27 @@ type DefaultSelection struct {
 }
 
 // MCPServerConfig describe un servidor MCP a lanzar.
+// Soporta dos transportes: stdio (subproceso) y http/sse (remoto).
+// Para stdio son obligatorios Command/Args; para http/sse es obligatorio URL.
+// Type por defecto es "stdio" cuando hay Command, o "http" cuando hay URL.
 type MCPServerConfig struct {
-	Command string            `yaml:"command"`
+	Type    string            `yaml:"type,omitempty"` // stdio | http | sse (default: stdio si hay command, http si hay url)
+	Command string            `yaml:"command,omitempty"`
 	Args    []string          `yaml:"args,omitempty"`
 	Env     map[string]string `yaml:"env,omitempty"`
+	URL     string            `yaml:"url,omitempty"`
+	Headers map[string]string `yaml:"headers,omitempty"`
+}
+
+// MCPServerType devuelve el tipo efectivo del servidor MCP.
+func (c MCPServerConfig) MCPServerType() string {
+	if c.Type != "" {
+		return c.Type
+	}
+	if c.URL != "" {
+		return "http"
+	}
+	return "stdio"
 }
 
 // SearchConfig configura el proveedor de búsqueda web.

@@ -92,7 +92,6 @@ func TestTUIStreamingNoPanic(t *testing.T) {
 	// Si llegamos aquí sin crash, el fix funciona (no nil deref en StreamText).
 }
 
-
 // TestNewUserOnboardingPersistsAndInitOpensWizard valida la métrica de éxito:
 // un usuario nuevo, sin config, ve la guía de /init (el fix de Init que antes
 // se perdía) y /init abre el asistente de configuración.

@@ -40,6 +40,37 @@ func runDoctor(ctx context.Context, app *apppkg.App) error {
 		}
 	}
 
+	// MCP servers.
+	if len(config.MCPServers) > 0 {
+		report.ok("mcp servers: %d configurados", len(config.MCPServers))
+		for name, s := range config.MCPServers {
+			target := s.Command
+			if s.URL != "" {
+				target = s.URL
+			}
+			report.line("  mcp %s (%s) → %s", name, s.MCPServerType(), target)
+		}
+	} else {
+		report.line("mcp: sin servidores configurados")
+	}
+
+	// LSP
+	if app.LSP != nil {
+		report.ok("lsp: activo")
+	} else {
+		report.line("lsp: no detectado (instala gopls / typescript-language-server)")
+	}
+	// Hooks
+	hookDirs := []string{app.Paths.ConfigDir + "/hooks/bash", ".forgen/hooks/bash"}
+	for _, dir := range hookDirs {
+		if entries, err := os.ReadDir(dir); err == nil && len(entries) > 0 {
+			report.ok("hooks bash: %d en %s", len(entries), dir)
+		}
+	}
+	if app.ToolRegistry != nil {
+		report.line("tools registradas: %d", len(app.ToolRegistry.ListTools()))
+	}
+
 	// Binarios necesarios.
 	for _, binary := range []string{"git"} {
 		if isAvailable(binary) {

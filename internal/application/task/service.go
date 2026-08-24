@@ -67,7 +67,9 @@ func (s *Service) ExecuteTaskAsync(ctx context.Context, taskID string) error {
 	go func() { _, _ = s.executor.Execute(context.WithoutCancel(ctx), t) }()
 	return nil
 }
-func (s *Service) CancelTask(ctx context.Context, taskID string) error { return s.executor.Cancel(ctx, taskID) }
+func (s *Service) CancelTask(ctx context.Context, taskID string) error {
+	return s.executor.Cancel(ctx, taskID)
+}
 func (s *Service) GetTaskStatus(ctx context.Context, taskID string) (domain.TaskStatus, error) {
 	return s.executor.GetStatus(ctx, taskID)
 }

@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/rodascaar/forgen/internal/core/domain"
 	"github.com/rodascaar/forgen/internal/core/ports"
-	"github.com/google/uuid"
 )
 
 // eventTypes son los tipos de evento del log de auditoría.

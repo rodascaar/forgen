@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/rodascaar/forgen/internal/core/ports"
 	"github.com/go-enry/go-enry/v2"
+	"github.com/rodascaar/forgen/internal/core/ports"
 )
 
 // maxFilesToAnalyze limita el escaneo del detector.

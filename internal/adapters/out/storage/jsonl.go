@@ -2,7 +2,6 @@
 package storage
 
 import (
-	"sync"
 	"bufio"
 	"bytes"
 	"context"
@@ -13,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rodascaar/forgen/internal/core/domain"
@@ -64,9 +64,9 @@ const (
 // JSONLStore persiste sesiones como archivos append-only por sesión.
 // JSONLStore persiste sesiones como archivos append-only por sesión.
 type JSONLStore struct {
-	 dir string
-	 mu      sync.Mutex
-	 closed  bool
+	dir    string
+	mu     sync.Mutex
+	closed bool
 }
 
 // NewJSONLStore crea el store y garantiza que el directorio exista.

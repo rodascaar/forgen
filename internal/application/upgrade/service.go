@@ -42,12 +42,12 @@ type Service struct {
 // New construye el servicio con los valores por defecto de GitHub.
 func New() *Service {
 	return &Service{
-		HTTP: &http.Client{Timeout: 30 * time.Second},
-		Repo: defaultRepo,
-		APIURL: "https://api.github.com/repos/" + defaultRepo + "/releases/latest",
-		DownloadBase: "https://github.com/" + defaultRepo + "/releases/download",
+		HTTP:           &http.Client{Timeout: 30 * time.Second},
+		Repo:           defaultRepo,
+		APIURL:         "https://api.github.com/repos/" + defaultRepo + "/releases/latest",
+		DownloadBase:   "https://github.com/" + defaultRepo + "/releases/download",
 		CurrentVersion: func() string { return "0.1.0" },
-		Executable: os.Executable,
+		Executable:     os.Executable,
 	}
 }
 

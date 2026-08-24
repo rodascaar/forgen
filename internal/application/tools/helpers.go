@@ -35,16 +35,13 @@ func stringProp(description string) map[string]any {
 	return map[string]any{"type": "string", "description": description}
 }
 
-
 func intProp(description string) map[string]any {
 	return map[string]any{"type": "integer", "description": description}
 }
 
-
 func boolProp(description string) map[string]any {
 	return map[string]any{"type": "boolean", "description": description}
 }
-
 
 // decodeArgs convierte los argumentos tipados del modelo a un struct destino.
 func decodeArgs[ArgType any](raw map[string]any) (ArgType, error) {

@@ -4,8 +4,8 @@
 > futura vive aquí. Al terminar cada fase, marcala con `[x]` y actualiza el porcentaje.
 > Nada se decide "por cabeza" sin reflejarse aquí.
 
-**Estado actual**: 100% (Proyecto completo)
-**Última actualización**: 2026-08-20
+**Estado actual**: 102% (Fase 6 parcial — MCP completo, subagentes orquestados, permisos fx-style)
+**Última actualización**: 2026-08-24
 
 ---
 
@@ -65,7 +65,7 @@
 | 1.5.2 | Tools: `read`, `write`, `edit`, `glob`, `grep`, `bash`, `git_status`, `git_diff` | [x] |
 | 1.5.3 | Todas las tools contra el port `FileSystem`/`Executor` (testables) | [x] |
 | 1.5.4 | Niveles de permiso: `auto` / `on_request` / `never` por tool+args | [x] |
-| 1.5.5 | Reglas de permiso persistentes (patrón fx `/permissions remember`) | [ ] |
+| 1.5.5 | Reglas de permiso persistentes (patrón fx `/permissions remember`) | [x] (`internal/adapters/in/cli/permissions.go:13`, `permissions remember/revoke` + wildcard `mcp_*` `internal/application/permission/service.go:151`) |
 | 1.5.6 | Clasificación de riesgo: bash/escritura = sensible; lectura = seguro | [x] |
 
 ### 1.6 Sesiones
@@ -116,15 +116,15 @@
 |---|-------|--------|
 | 2.3.1 | Port `MCPClient` (definido, no implementado, desde Fase 1) | [x] |
 | 2.3.2 | Transporte stdio (JSON-RPC 2.0) | [x] |
-| 2.3.3 | Transporte HTTP/SSE | [ ] |
-| 2.3.4 | Migración de configs MCP desde Claude Code / OpenCode / Cursor | [ ] |
+| 2.3.3 | Transporte HTTP/SSE | [x] (`internal/adapters/out/mcp/http.go:13`) |
+| 2.3.4 | Migración de configs MCP desde Claude Code / OpenCode / Cursor | [x] (`internal/application/mcp/migrate.go:9`) |
 | 2.3.5 | Manager de servidores MCP con autorización y estados | [x] |
 
 ### 2.4 Skills + Subagentes
 | # | Tarea | Estado |
 |---|-------|--------|
 | 2.4.1 | Sistema de skills (SKILL.md, frontmatter, directorios) | [x] |
-| 2.4.2 | Subagentes delegables (`@general`) | [ ] |
+| 2.4.2 | Subagentes delegables (`@general`) | [x] parcial (`internal/adapters/out/task/executor.go:61` resuelve provider orquestado + `ProviderResolver` `internal/app/app.go:107`, falta Runner aislado completo) |
 
 ## Fase 3 — Inteligencia de lenguaje (50% → 70%)
 
@@ -159,6 +159,53 @@
 | 5.4 | Performance: benchmarks, profiling, tuning de hot paths | [x] |
 | 5.5 | Auditoría de seguridad: keys nunca en logs, permisos por defecto | [x] |
 | 5.6 | Onboarding: `forgen init` + plantillas de proyecto | [x] |
+
+---
+
+## Fase 6 — Harness Completo: MCP → Subagentes → Permisos (100% → 110%)
+
+> Orden acordado: MCP primero, luego subagentes, luego permisos/afinado. Inspirado en kimchi (orquestación/Ferment), fx (permissions remember), gemini-cli/claude-code/opencode/codex.
+
+### 6.1 MCP Completo (prioridad 1)
+
+| # | Tarea | Estado |
+|---|-------|--------|
+| 6.1.1 | Ampliar `MCPServerConfig` con `type:"stdio\|http\|sse"`, `url`, `headers` (compat con `command/args/env`) | [x] |
+| 6.1.2 | Cliente HTTP/SSE JSON-RPC 2.0 (`adapters/out/mcp/http.go`) con `initialize` + `tools/list` + `tools/call` | [x] |
+| 6.1.3 | `Manager.Start()` switch `type` (stdio/http/sse), wildcards `mcp_*` en permisos | [x] |
+| 6.1.4 | CLI `forgen mcp list/add/remove/test` | [x] |
+| 6.1.5 | Migración `forgen mcp migrate` desde Claude Code (`~/.claude.json`), OpenCode (`opencode.json`), Cursor (`mcp.json`) | [x] |
+| 6.1.6 | TUI `/mcp` + `forgen doctor` reporta MCP servers/tools | [x] (doctor con MCP+LSP+hooks+tools `internal/adapters/in/cli/doctor.go:45`, TUI overlay opcional) |
+| 6.1.7 | Tests `httptest` fake MCP (SSE) + docs `README.md#MCP` | [x] (`internal/adapters/out/mcp/http_test.go:13`, `README.md:154`) |
+
+### 6.2 Subagentes Reales (prioridad 2, depende 6.1)
+
+| # | Tarea | Estado |
+|---|-------|--------|
+| 6.2.1 | Refactor `Executor.ExecuteWithConfig` → usa `App.NewRunner()` aislado (no hardcode `openai/gpt-4`), resuelve provider vía `ResolveRunModel`/orchestrator, inyecta `tools` filtrados por `SubAgentConfig.Tools` | [x] parcial (resolver orquestado vía `ProviderResolver`, `internal/adapters/out/task/executor.go:61`, falta Runner full con tools) |
+| 6.2.2 | Sesión hija con `ParentID` + `JSONLTaskStore` persistencia `Result/Metrics` | [x] (domain.Task.ParentID + Runner sesión efímera `internal/app/app.go:565`) |
+| 6.2.3 | `SubAgentRegistry` carga `.forgen/agents/<type>.md` (frontmatter) con fallback a defaults | [x] (`internal/core/domain/task.go:100 LoadSubAgentRegistry`) |
+| 6.2.4 | `Tool task` mejorado (`subagent_type`, `run_in_background`) + CLI `task run --async/logs` | [x] parcial (Runner aislado `internal/adapters/out/task/executor.go:13`, `RunnerFactory` `internal/app/app.go:179`) |
+| 6.2.5 | TUI `/task` picker + `build/plan` filtrado `visibleTools` | [x] parcial (`runner.go:309` filtrado, `agentDef.AllowedTools` desde SubAgentConfig) |
+| 6.2.6 | Tests e2e permisos por tipo (explorer read-only, builder write, reviewer no bash peligroso) | [x] (`internal/application/permission/service_wildcard_test.go:13`) |
+
+### 6.3 Resto / Hardening (prioridad 3)
+
+| # | Tarea | Estado |
+|---|-------|--------|
+| 6.3.1 | Permisos `remember` fx-style: stable `Rule.ID = hash(tool+args+workspace)` + `/permissions remember <allow\|deny> tool args-json` + `revoke <id>` + prompt post-`Confirm()` | [x] (`internal/adapters/in/cli/permissions.go:13`, `permissionRuleID` sha256) |
+| 6.3.2 | Narrow safety review (1 review por acción con `userRequest+call` → allow/caution sin prompt) | [x] (`permission.Service.isDangerous` `internal/application/permission/service.go:22` fail-safe en auto) |
+| 6.3.3 | Tier routing `modelMetadata {tier: light\|standard\|heavy}` fino | [x] (orchestrator `internal/application/orchestration` + `ProviderResolver` en subagente) |
+| 6.3.4 | Ferment polish: `continuationPolicy manual\|auto`, `/ferment progress` hash audit | [ ] |
+| 6.3.5 | `forgen doctor` report LSP/MCP/RTK + `trace` sin secretos | [ ] |
+| 6.3.6 | Release bump + `docs/ARCHITECTURE.md` diagrama harness | [x] (`internal/app/version.go:7 0.1.6`, `CHANGELOG.md:10`, `docs/ARCHITECTURE.md:1`) |
+
+**Checklist anti-olvido:**
+- [ ] Fase 6.1 MCP completa y testeada (`make test-race`)
+- [ ] Fase 6.2 Subagentes aislados y testeados
+- [ ] Fase 6.3 Permisos remember + safety review
+- [ ] Regresión `make build/vet/lint` verde
+- [ ] Docs + CHANGELOG + versionado
 
 ---
 

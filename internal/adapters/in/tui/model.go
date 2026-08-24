@@ -352,7 +352,7 @@ func (m *Model) resetConfirm() {
 }
 
 func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
-		// Overlay de todo: navegación y toggle
+	// Overlay de todo: navegación y toggle
 	if m.showTodo {
 		switch message.String() {
 		case "esc", "q", "ctrl+c", "p", "P":

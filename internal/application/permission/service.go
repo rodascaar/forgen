@@ -87,7 +87,7 @@ func decisionFromLevel(level domain.PermissionLevel, reason string) domain.Decis
 
 func (s *Service) matchRule(call domain.ToolCall) (domain.PermissionRule, bool) {
 	for _, rule := range s.rules {
-		if rule.Tool != call.Name {
+		if !toolMatches(rule.Tool, call.Name) {
 			continue
 		}
 		if rule.Workspace != "" && rule.Workspace != s.workspace {
@@ -146,6 +146,21 @@ func RuleFor(call domain.ToolCall, level domain.PermissionLevel, workspace strin
 		Workspace: workspace,
 		IsExact:   true,
 	}
+}
+
+// toolMatches soporta wildcards simples: "mcp_*" o "*" coincide con prefijo.
+func toolMatches(pattern, tool string) bool {
+	if pattern == tool {
+		return true
+	}
+	if strings.HasSuffix(pattern, "*") {
+		prefix := strings.TrimSuffix(pattern, "*")
+		return strings.HasPrefix(tool, prefix)
+	}
+	if pattern == "*" {
+		return true
+	}
+	return false
 }
 
 var _ ports.PermissionDecider = (*Service)(nil)

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/rodascaar/forgen/internal/adapters/out/credentials"
 	"github.com/rodascaar/forgen/internal/adapters/out/exec"
@@ -21,6 +22,7 @@ import (
 	"github.com/rodascaar/forgen/internal/adapters/out/sandbox"
 	"github.com/rodascaar/forgen/internal/adapters/out/search"
 	"github.com/rodascaar/forgen/internal/adapters/out/storage"
+	taskadapter "github.com/rodascaar/forgen/internal/adapters/out/task"
 	"github.com/rodascaar/forgen/internal/application/agent"
 	"github.com/rodascaar/forgen/internal/application/config"
 	"github.com/rodascaar/forgen/internal/application/ferment"
@@ -30,7 +32,6 @@ import (
 	"github.com/rodascaar/forgen/internal/application/permission"
 	"github.com/rodascaar/forgen/internal/application/session"
 	"github.com/rodascaar/forgen/internal/application/skills"
-	taskadapter "github.com/rodascaar/forgen/internal/adapters/out/task"
 	apptask "github.com/rodascaar/forgen/internal/application/task"
 	apptodo "github.com/rodascaar/forgen/internal/application/todo"
 	"github.com/rodascaar/forgen/internal/application/tools"
@@ -108,6 +109,35 @@ func NewApp(logger *slog.Logger) (*App, error) {
 		LLMFactory: llm.NewFactory(logger), Credentials: credentialStore,
 	}, taskStore)
 
+	// Inyectar resolver orquestado para subagentes (evita hardcode openai/gpt-4).
+	// Usa el mismo flujo que ResolveRunModel: clasifica prompt y elige tier.
+	llmFactory := llm.NewFactory(logger)
+	_ = llmFactory // keep reference for closure
+	taskExecutor.SetProviderResolver(func(ctx context.Context, task *domain.Task) (ports.LLMProvider, domain.Model, error) {
+		// Resolver fuera de App para evitar ciclo: crear orchestrator temporal.
+		cfg, err := configService.Load(ctx)
+		if err != nil {
+			cfg = domain.DefaultAppConfig()
+		}
+		// providerAPIKey resolver: credentialStore primero, env fallback
+		keyResolver := func(pc domain.ProviderConfig) string {
+			if credentialStore != nil {
+				if secret, err := credentialStore.Get(ctx, ProviderCredentialKey(pc.Name)); err == nil && secret != "" {
+					return secret
+				}
+			}
+			return pc.ResolveAPIKey(os.Getenv)
+		}
+		orch := orchestration.NewOrchestrator(cfg, llmFactory, keyResolver, logger)
+		phase := orch.Classify(task.Description)
+		model := orch.SelectFor(phase, task.Description)
+		provider, err := orch.Provider(ctx, model)
+		if err != nil {
+			return nil, domain.Model{}, err
+		}
+		return provider, model, nil
+	})
+
 	workspace, err := os.Getwd()
 	if err != nil {
 		return nil, fmt.Errorf("resolver workspace: %w", err)
@@ -147,6 +177,52 @@ func NewApp(logger *slog.Logger) (*App, error) {
 	// Herramientas de planificación y delegación
 	registry.Register(apptodo.NewTool(todoStore))
 	registry.Register(apptask.NewTool(taskStore, taskExecutor))
+
+	// Inyectar Runner aislado para subagentes con tools filtradas por tipo (kimchi/opencode).
+	// Debe ir después de crear registry para capturar FileSystem/ToolRegistry.
+	taskExecutor.SetRunnerFactory(func(ctx context.Context, task *domain.Task) (taskadapter.Runner, error) {
+		// Resolver modelo/provider orquestado
+		cfg, err := configService.Load(ctx)
+		if err != nil {
+			cfg = domain.DefaultAppConfig()
+		}
+		keyResolver := func(pc domain.ProviderConfig) string {
+			if credentialStore != nil {
+				if secret, err := credentialStore.Get(ctx, ProviderCredentialKey(pc.Name)); err == nil && secret != "" {
+					return secret
+				}
+			}
+			return pc.ResolveAPIKey(os.Getenv)
+		}
+		orch := orchestration.NewOrchestrator(cfg, llmFactory, keyResolver, logger)
+		phase := orch.Classify(task.Description)
+		model := orch.SelectFor(phase, task.Description)
+		provider, err := orch.Provider(ctx, model)
+		if err != nil {
+			return nil, err
+		}
+		// Agent filtrado por tipo
+		agentDef, ok := domain.FindAgent(domain.BuiltinAgents(), string(task.Type))
+		if !ok {
+			agentDef = domain.BuiltinAgents()[0]
+		}
+		// Si el subagente define Prompt/Tools, sobreescribir agente visible
+		if task.Config.Prompt != "" {
+			agentDef.SystemPrompt = task.Config.Prompt
+		}
+		if len(task.Config.Tools) > 0 {
+			agentDef.AllowedTools = task.Config.Tools
+		}
+		// Messenger no-op + responder que niega confirms interactivos (subagente no pregunta)
+		messenger := &noopMessenger{}
+		responder := &autoDenyResponder{}
+		// Crear permisos en modo auto para subagente (hereda rules filtradas)
+		// Se usa App.NewRunner con workspace actual.
+		ws := workspace
+		// Capturar servicios necesarios (sessionService, usageService, etc.) vía closure
+		// Construir Runner manual para respetar AllowedTools del subagente
+		return newSubAgentRunner(ctx, provider, model, agentDef, ws, messenger, responder, registry, sessionService, usageService, credentialStore, logger, cfg)
+	})
 
 	// Config efectiva (para web search y MCP).
 	// (ya cargada arriba; se reutiliza appConfig)
@@ -382,7 +458,6 @@ func (a *App) ListModelsFor(ctx context.Context, config domain.ProviderConfig) [
 	return models
 }
 
-
 // ResolveProvider crea el provider para el modelo configurado.
 func (a *App) ResolveProvider(config domain.AppConfig, model domain.Model) (ports.LLMProvider, error) {
 	providerConfig, ok := config.FindProvider(model.Provider)
@@ -493,6 +568,96 @@ func buildSearchProvider(config domain.AppConfig, logger *slog.Logger) ports.Sea
 		logger.Debug("búsqueda web deshabilitada (sin search.provider)")
 		return nil
 	}
+}
+
+// subAgentRunner adapta agent.Runner a task.Runner (Run con prompt).
+type subAgentRunner struct {
+	inner   *agent.Runner
+	model   domain.Model
+	agent   domain.Agent
+	phase   domain.AgentPhase
+	session domain.Session
+}
+
+func (r *subAgentRunner) Run(ctx context.Context, workspace, prompt string) (string, error) {
+	// Crear sesión efímera en memoria (no persiste en SessionStore del usuario, usa TaskStore para resultado)
+	sess := r.session
+	if sess.ID == "" {
+		sess = domain.Session{
+			ID:        fmt.Sprintf("subagent-%d", time.Now().UnixNano()),
+			Workspace: workspace,
+			Model:     r.model,
+			Agent:     r.agent.Name,
+			StartedAt: time.Now(),
+		}
+	}
+	result, err := r.inner.Run(ctx, agent.RunInput{
+		Session:    sess,
+		Agent:      r.agent,
+		Workspace:  workspace,
+		UserPrompt: prompt,
+		Phase:      r.phase,
+	})
+	if err != nil {
+		return "", err
+	}
+	return result.FinalText, nil
+}
+
+func newSubAgentRunner(ctx context.Context, provider ports.LLMProvider, model domain.Model, agentDef domain.Agent, workspace string, messenger ports.Messenger, responder ports.PermissionResponder, registry *tools.Registry, sessionService *session.Service, usageService *usage.Service, credStore ports.CredentialStore, logger *slog.Logger, cfg domain.AppConfig) (*subAgentRunner, error) {
+	// Permisos auto para subagente (hereda reglas globales, niega interactivo)
+	decider := permission.NewService(domain.PermissionModeAuto, workspace, cfg.Permissions.Rules, nil)
+	systemPrompt := func(ctx context.Context) (string, error) {
+		return agentDef.SystemPrompt, nil
+	}
+	runner, err := agent.NewRunner(agent.Options{
+		Provider:      provider,
+		Tools:         registry,
+		Decider:       decider,
+		Responder:     responder,
+		Messenger:     messenger,
+		Sessions:      sessionService,
+		SystemPrompt:  systemPrompt,
+		Usage:         usageService,
+		MaxIterations: taskMaxTurns(agentDef, cfg),
+		Logger:        logger,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &subAgentRunner{
+		inner: runner,
+		model: model,
+		agent: agentDef,
+		phase: domain.AgentPhase(agentDef.Name),
+	}, nil
+}
+
+func taskMaxTurns(agentDef domain.Agent, cfg domain.AppConfig) int {
+	if cfg.MaxIterations > 0 {
+		return cfg.MaxIterations
+	}
+	return 30
+}
+
+// noopMessenger ignora todos los eventos (subagente no necesita TUI).
+type noopMessenger struct{}
+
+func (n *noopMessenger) StreamText(_, _ string)                                        {}
+func (n *noopMessenger) ToolStarted(_ string, _ domain.ToolCall)                       {}
+func (n *noopMessenger) ToolFinished(_ string, _ domain.ToolCall, _ domain.ToolResult) {}
+func (n *noopMessenger) Notice(_ string, _ string)                                     {}
+func (n *noopMessenger) Error(_ string, _ error)                                       {}
+func (n *noopMessenger) Finished(_ string, _ string)                                   {}
+
+// autoDenyResponder niega cualquier confirmación interactiva en subagente.
+type autoDenyResponder struct{}
+
+func (a *autoDenyResponder) Confirm(_ context.Context, _ string, _ domain.ToolCall) (bool, error) {
+	return false, nil
+}
+func (a *autoDenyResponder) Remember(_ context.Context, _ string, _ domain.ToolCall, _ domain.PermissionLevel) error {
+	return nil
 }
 
 // buildExecutor construye la cadena de ejecución: local o docker, con hooks.

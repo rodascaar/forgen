@@ -98,9 +98,9 @@ func TestProviderUsable(t *testing.T) {
 
 	// Ollama local sin key debe ser usable (no requiere API key).
 	ollama := domain.ProviderConfig{
-		Name:    "ollama",
-		Type:    domain.ProviderTypeOpenAICompatible,
-		BaseURL: "http://localhost:11434/v1",
+		Name:      "ollama",
+		Type:      domain.ProviderTypeOpenAICompatible,
+		BaseURL:   "http://localhost:11434/v1",
 		APIKeyEnv: "",
 	}
 	if !app.ProviderUsable(ollama) {
@@ -109,9 +109,9 @@ func TestProviderUsable(t *testing.T) {
 
 	// Proveedor remoto sin key no debe ser usable.
 	remote := domain.ProviderConfig{
-		Name:    "openai",
-		Type:    domain.ProviderTypeOpenAICompatible,
-		BaseURL: "https://api.openai.com/v1",
+		Name:      "openai",
+		Type:      domain.ProviderTypeOpenAICompatible,
+		BaseURL:   "https://api.openai.com/v1",
 		APIKeyEnv: "FORGEN_TEST_NO_SUCH_KEY_XYZ",
 	}
 	if app.ProviderUsable(remote) {

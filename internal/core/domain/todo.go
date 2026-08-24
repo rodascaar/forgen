@@ -42,15 +42,23 @@ func NewTodo(content, activeForm string) *Todo {
 
 func (t *Todo) MarkInProgress() { t.Status = TodoStatusInProgress; t.UpdatedAt = time.Now() }
 func (t *Todo) MarkDone() {
-	t.Status = TodoStatusDone; t.UpdatedAt = time.Now()
-	now := time.Now(); t.CompletedAt = &now
+	t.Status = TodoStatusDone
+	t.UpdatedAt = time.Now()
+	now := time.Now()
+	t.CompletedAt = &now
 }
 func (t *Todo) MarkCancelled() { t.Status = TodoStatusCancelled; t.UpdatedAt = time.Now() }
-func (t *Todo) MarkPending()   { t.Status = TodoStatusPending; t.UpdatedAt = time.Now(); t.CompletedAt = nil }
+func (t *Todo) MarkPending() {
+	t.Status = TodoStatusPending
+	t.UpdatedAt = time.Now()
+	t.CompletedAt = nil
+}
 func (t *Todo) UpdateContent(c, a string) { t.Content = c; t.ActiveForm = a; t.UpdatedAt = time.Now() }
-func (t *Todo) SetOrder(o int) { t.Order = o; t.UpdatedAt = time.Now() }
-func (t *Todo) IsDone() bool   { return t.Status == TodoStatusDone }
-func (t *Todo) IsActive() bool { return t.Status == TodoStatusPending || t.Status == TodoStatusInProgress }
+func (t *Todo) SetOrder(o int)            { t.Order = o; t.UpdatedAt = time.Now() }
+func (t *Todo) IsDone() bool              { return t.Status == TodoStatusDone }
+func (t *Todo) IsActive() bool {
+	return t.Status == TodoStatusPending || t.Status == TodoStatusInProgress
+}
 
 func (t Todo) MarshalJSON() ([]byte, error) {
 	type Alias Todo
@@ -68,7 +76,8 @@ func (t *Todo) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
 	}
-	*t = Todo(aux.Alias); t.Status = TodoStatus(aux.Status)
+	*t = Todo(aux.Alias)
+	t.Status = TodoStatus(aux.Status)
 	return nil
 }
 
@@ -85,11 +94,17 @@ func NewTodoList(name string) *TodoList {
 	now := time.Now()
 	return &TodoList{ID: generateID(), Name: name, Todos: make([]*Todo, 0), CreatedAt: now, UpdatedAt: now}
 }
-func (l *TodoList) AddTodo(todo *Todo) { todo.Order = len(l.Todos); l.Todos = append(l.Todos, todo); l.UpdatedAt = time.Now() }
+func (l *TodoList) AddTodo(todo *Todo) {
+	todo.Order = len(l.Todos)
+	l.Todos = append(l.Todos, todo)
+	l.UpdatedAt = time.Now()
+}
 func (l *TodoList) RemoveTodo(id string) bool {
 	for i, t := range l.Todos {
 		if t.ID == id {
-			l.Todos = append(l.Todos[:i], l.Todos[i+1:]...); l.reorder(); l.UpdatedAt = time.Now()
+			l.Todos = append(l.Todos[:i], l.Todos[i+1:]...)
+			l.reorder()
+			l.UpdatedAt = time.Now()
 			return true
 		}
 	}
@@ -107,10 +122,15 @@ func (l *TodoList) MoveTodo(id string, newIndex int) bool {
 	if newIndex < 0 || newIndex >= len(l.Todos) {
 		return false
 	}
-	var todo *Todo; var old int; found := false
+	var todo *Todo
+	var old int
+	found := false
 	for i, t := range l.Todos {
 		if t.ID == id {
-			todo = t; old = i; found = true; break
+			todo = t
+			old = i
+			found = true
+			break
 		}
 	}
 	if !found {
@@ -122,24 +142,59 @@ func (l *TodoList) MoveTodo(id string, newIndex int) bool {
 	} else {
 		l.Todos = append(l.Todos[:newIndex], append([]*Todo{todo}, l.Todos[newIndex:]...)...)
 	}
-	l.reorder(); l.UpdatedAt = time.Now()
+	l.reorder()
+	l.UpdatedAt = time.Now()
 	return true
 }
-func (l *TodoList) reorder() { for i, t := range l.Todos { t.Order = i } }
+func (l *TodoList) reorder() {
+	for i, t := range l.Todos {
+		t.Order = i
+	}
+}
 func (l *TodoList) GetPending() []*Todo {
-	var r []*Todo; for _, t := range l.Todos { if t.Status == TodoStatusPending { r = append(r, t) } }; return r
+	var r []*Todo
+	for _, t := range l.Todos {
+		if t.Status == TodoStatusPending {
+			r = append(r, t)
+		}
+	}
+	return r
 }
 func (l *TodoList) GetInProgress() []*Todo {
-	var r []*Todo; for _, t := range l.Todos { if t.Status == TodoStatusInProgress { r = append(r, t) } }; return r
+	var r []*Todo
+	for _, t := range l.Todos {
+		if t.Status == TodoStatusInProgress {
+			r = append(r, t)
+		}
+	}
+	return r
 }
 func (l *TodoList) GetDone() []*Todo {
-	var r []*Todo; for _, t := range l.Todos { if t.Status == TodoStatusDone { r = append(r, t) } }; return r
+	var r []*Todo
+	for _, t := range l.Todos {
+		if t.Status == TodoStatusDone {
+			r = append(r, t)
+		}
+	}
+	return r
 }
 func (l *TodoList) GetActive() []*Todo {
-	var r []*Todo; for _, t := range l.Todos { if t.IsActive() { r = append(r, t) } }; return r
+	var r []*Todo
+	for _, t := range l.Todos {
+		if t.IsActive() {
+			r = append(r, t)
+		}
+	}
+	return r
 }
 func (l *TodoList) Progress() (int, int) {
-	done := 0; for _, t := range l.Todos { if t.IsDone() { done++ } }; return done, len(l.Todos)
+	done := 0
+	for _, t := range l.Todos {
+		if t.IsDone() {
+			done++
+		}
+	}
+	return done, len(l.Todos)
 }
 func (l *TodoList) ProgressPercent() float64 {
 	d, tot := l.Progress()

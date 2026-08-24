@@ -158,9 +158,28 @@ mcp_servers:
   filesystem:
     command: npx
     args: ["-y", "@modelcontextprotocol/server-filesystem", "/ruta"]
+  # HTTP/SSE remoto
+  notion:
+    type: http
+    url: https://mcp.notion.com/mcp
+    headers:
+      Authorization: "Bearer ${NOTION_TOKEN}"
+  github:
+    type: sse
+    url: https://api.githubcopilot.com/mcp
 ```
 
-Las herramientas MCP se exponen al agente como `filesystem_<tool>`.
+Transportes: `stdio` (subproceso), `http` y `sse` (JSON-RPC 2.0). Las herramientas se exponen como `<server>_<tool>` (ej: `filesystem_read`, `github_list_prs`).
+
+```bash
+forgen mcp list                    # lista servidores
+forgen mcp add notion --type http --url https://mcp.notion.com/mcp
+forgen mcp test notion             # handshake + lista tools
+forgen mcp migrate                 # importa desde Claude Code (~/.claude.json), OpenCode, Cursor
+forgen doctor                      # muestra MCP servers configurados
+```
+
+Migración: en el primer arranque, `forgen` puede importar servidores de `Claude Code`, `OpenCode` y `Cursor` sin sobrescribir los existentes.
 
 ## Herramientas integradas (agnósticas al lenguaje)
 

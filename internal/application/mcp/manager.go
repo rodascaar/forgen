@@ -40,7 +40,17 @@ func (m *Manager) Start(ctx context.Context, servers map[string]domain.MCPServer
 }
 
 func (m *Manager) startServer(ctx context.Context, name string, config domain.MCPServerConfig) error {
-	client, err := mcpadapter.NewStdioClient(config.Command, config.Args, config.Env)
+	var client ports.MCPClient
+	var err error
+	switch config.MCPServerType() {
+	case "http", "sse":
+		if config.URL == "" {
+			return fmt.Errorf("mcp %s: url requerida para type http/sse", name)
+		}
+		client, err = mcpadapter.NewHTTPClient(config.URL, config.Headers)
+	default: // stdio
+		client, err = mcpadapter.NewStdioClient(config.Command, config.Args, config.Env)
+	}
 	if err != nil {
 		return err
 	}

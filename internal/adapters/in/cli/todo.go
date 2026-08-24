@@ -84,7 +84,9 @@ func newTodoAddCmd(app *app.App) *cobra.Command {
 	var listID, activeForm string
 	cmd := &cobra.Command{
 		Use: "add <contenido>", Short: "Añade una tarea a una lista", Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error { return runTodoAdd(cmd.Context(), app, listID, activeForm, args[0]) },
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runTodoAdd(cmd.Context(), app, listID, activeForm, args[0])
+		},
 	}
 	cmd.Flags().StringVar(&listID, "list", "", "ID de la lista (crea nueva si no existe)")
 	cmd.Flags().StringVar(&activeForm, "active", "", "Forma activa (p.ej. 'crear archivo X')")
@@ -113,7 +115,9 @@ func newTodoDoneCmd(app *app.App) *cobra.Command {
 	var listID string
 	cmd := &cobra.Command{
 		Use: "done <todo-id>", Short: "Marca una tarea como completada", Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error { return runTodoUpdateStatus(cmd.Context(), app, listID, args[0], domain.TodoStatusDone) },
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runTodoUpdateStatus(cmd.Context(), app, listID, args[0], domain.TodoStatusDone)
+		},
 	}
 	cmd.Flags().StringVar(&listID, "list", "", "ID de la lista")
 	return cmd
@@ -122,7 +126,9 @@ func newTodoUndoCmd(app *app.App) *cobra.Command {
 	var listID string
 	return &cobra.Command{
 		Use: "undo <todo-id>", Short: "Desmarca una tarea (vuelve a pendiente)", Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error { return runTodoUpdateStatus(cmd.Context(), app, listID, args[0], domain.TodoStatusPending) },
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runTodoUpdateStatus(cmd.Context(), app, listID, args[0], domain.TodoStatusPending)
+		},
 	}
 }
 func newTodoProgressCmd(app *app.App) *cobra.Command {
@@ -147,7 +153,9 @@ func newTodoRemoveCmd(app *app.App) *cobra.Command {
 	var listID string
 	return &cobra.Command{
 		Use: "remove <todo-id>", Short: "Elimina una tarea", Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error { return runTodoRemove(cmd.Context(), app, listID, args[0]) },
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runTodoRemove(cmd.Context(), app, listID, args[0])
+		},
 	}
 }
 func runTodoRemove(ctx context.Context, app *app.App, listID, todoID string) error {

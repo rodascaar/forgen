@@ -27,6 +27,14 @@ el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 - **Release (Fase 5)**: CI multi-plataforma, GoReleaser, instalador `install.sh`,
   benchmarks y escaneo de seguridad (gitleaks + govulncheck).
 
+## [0.1.6] - 2026-08-24
+
+### Añadido
+
+- **MCP HTTP/SSE** (`type: http|sse` con `url/headers`) + `forgen mcp list/add/remove/test/migrate` y migración desde Claude Code/OpenCode/Cursor (`internal/adapters/out/mcp/http.go`, `internal/application/mcp/migrate.go`); wildcards `mcp_*` en permisos; `forgen doctor` reporta MCP/LSP.
+- **Subagentes orquestados** con `RunnerFactory` aislado por tipo (`internal/adapters/out/task/executor.go` + `internal/app/app.go:179`), `LoadSubAgentRegistry` desde `.forgen/agents/<type>.md` frontmatter, y `docs/ARCHITECTURE.md` con diagrama harness.
+- **Permisos `remember` fx-style** (`forgen permissions remember/revoke`, stable sha256, `internal/adapters/in/cli/permissions.go`) y tests `http_test.go` + `service_wildcard_test.go`.
+
 ## [No liberado]
 
 ### Añadido
