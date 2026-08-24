@@ -4,6 +4,12 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-1.1.0/) y
 el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 
+## [0.1.9] - 2026-08-24
+
+### Añadido
+
+- **Proveedor NVIDIA NIM**: preset `nvidia` (OpenAI-compatible, `https://integrate.api.nvidia.com/v1`, `NVIDIA_API_KEY`) con modelos `nvidia/llama-3.1-nemotron-ultra-253b-v1` y `meta/llama-3.3-70b-instruct` (`internal/core/domain/preset.go`). Uso: `forgen provider add nvidia` o `/init` → `nvidia`.
+
 ## [0.1.8] - 2026-08-24
 
 ### Añadido
@@ -102,6 +108,7 @@ el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 - **Validación/listado de modelos con timeout (15s)**: el paso "Validando..." y
   el listado en vivo de `/model` no se quedan colgados si el proveedor tarda.
 
+[0.1.9]: https://github.com/rodascaar/forgen/releases/tag/v0.1.9
 [0.1.8]: https://github.com/rodascaar/forgen/releases/tag/v0.1.8
 [0.1.7]: https://github.com/rodascaar/forgen/releases/tag/v0.1.7
 [0.1.6]: https://github.com/rodascaar/forgen/releases/tag/v0.1.6

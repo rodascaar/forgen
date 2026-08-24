@@ -26,6 +26,7 @@ func ProviderPresets() []ProviderPreset {
 		{Name: "gemini", Type: ProviderTypeOpenAICompatible, BaseURL: "https://generativelanguage.googleapis.com/v1beta/openai", APIKeyEnv: "GEMINI_API_KEY", Models: []string{"gemini-2.5-pro"}},
 		{Name: "xai", Type: ProviderTypeOpenAICompatible, BaseURL: "https://api.x.ai/v1", APIKeyEnv: "XAI_API_KEY", Models: []string{"grok-4"}},
 		{Name: "mistral", Type: ProviderTypeOpenAICompatible, BaseURL: "https://api.mistral.ai/v1", APIKeyEnv: "MISTRAL_API_KEY", Models: []string{"mistral-large-latest"}},
+		{Name: "nvidia", Type: ProviderTypeOpenAICompatible, BaseURL: "https://integrate.api.nvidia.com/v1", APIKeyEnv: "NVIDIA_API_KEY", Models: []string{"nvidia/llama-3.1-nemotron-ultra-253b-v1", "meta/llama-3.3-70b-instruct"}},
 
 		// Inferencia ultrarrápida
 		{Name: "groq", Type: ProviderTypeOpenAICompatible, BaseURL: "https://api.groq.com/openai/v1", APIKeyEnv: "GROQ_API_KEY", Models: []string{"llama-3.3-70b-versatile"}},
