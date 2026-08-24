@@ -30,7 +30,7 @@ type transcriptLine struct {
 
 // slashHelpText resume los comandos disponibles dentro de la TUI.
 const slashHelpText = `Comandos: /init configura tu proveedor y API key · /help esta ayuda · /quit sale
-Atajos: Enter envía · Tab cambia agente · Ctrl+H ayuda · PgUp/PgDn o Ctrl+U/D desplazan · Ctrl+C cancela / Ctrl+Q salir (2×)`
+Atajos: Enter envía · Tab cambia agente · PgUp/PgDn o rueda del ratón desplazan · Ctrl+C cancela / salir (2×) · /todo /mcp /help`
 
 // quitConfirmMsg resetea la confirmación de salida tras un timeout.
 type quitConfirmMsg struct{}
@@ -77,7 +77,7 @@ func Run(app *apppkg.App) error {
 	// NewProgram) sea visible para el modelo del programa. Si se pasa por
 	// valor, el programa mantiene una copia con program == nil y el primer
 	// streaming del agente crashea (nil deref en tuiMessenger.StreamText).
-	program := tea.NewProgram(&model, tea.WithAltScreen())
+	program := tea.NewProgram(&model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	model.program = program
 	_, err := program.Run()
 	return err
@@ -343,6 +343,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.handleKey(typedMessage)
 
+	case tea.MouseMsg:
+		return m.handleMouse(typedMessage)
+
 	case streamDeltaMsg:
 		m.assistantBuffer += typedMessage.text
 		return m, nil
@@ -376,6 +379,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.flushAssistant()
 		m.resetConfirm()
 		m.running = false
+		m.scrollOffset = 0
 		return m, nil
 
 	case runDoneMsg:
@@ -393,6 +397,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.resetConfirm()
 		m.running = false
+		m.scrollOffset = 0
 		return m, nil
 
 	case confirmRequestMsg:
@@ -421,6 +426,43 @@ func (m *Model) resetConfirm() {
 	m.confirming = false
 	m.confirmCall = domain.ToolCall{}
 	m.confirmCh = nil
+}
+
+// handleMouse desplaza el transcript con la rueda del ratón / trackpad.
+func (m Model) handleMouse(message tea.MouseMsg) (tea.Model, tea.Cmd) {
+	// La rueda solo aplica en la vista principal (no en overlays).
+	if m.showTodo || m.showMCP || m.helpOpen || m.wizard != nil || m.picker != nil {
+		return m, nil
+	}
+	switch message.Button {
+	case tea.MouseButtonWheelUp:
+		m.quitArmed = false
+		m.scrollBy(+3)
+	case tea.MouseButtonWheelDown:
+		m.quitArmed = false
+		m.scrollBy(-3)
+	}
+	return m, nil
+}
+
+// scrollBy ajusta el offset de scroll con signo positivo = subir, negativo =
+// bajar, y lo acota contra el tamaño real del transcript.
+func (m *Model) scrollBy(delta int) {
+	m.scrollOffset += delta
+	if m.scrollOffset < 0 {
+		m.scrollOffset = 0
+	}
+	limit := m.height - 4
+	if limit < 5 {
+		limit = 5
+	}
+	maxOffset := len(m.wrappedLines()) - limit
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if m.scrollOffset > maxOffset {
+		m.scrollOffset = maxOffset
+	}
 }
 
 func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -520,24 +562,7 @@ func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		m.quitArmed = true
-		m.append("notice", "¿Salir? Pulsa Ctrl+C o Ctrl+Q de nuevo para confirmar · Esc cancela")
-		return m, tea.Tick(3*time.Second, func(t time.Time) tea.Msg { return quitConfirmMsg{} })
-
-	case "ctrl+q", "alt+q":
-		if m.running {
-			if m.cancelRun != nil {
-				m.cancelRun()
-			}
-			m.append("notice", "Cancelando petición...")
-			m.quitArmed = false
-			return m, nil
-		}
-		if m.quitArmed {
-			m.quitting = true
-			return m, tea.Quit
-		}
-		m.quitArmed = true
-		m.append("notice", "¿Salir? Pulsa Ctrl+Q o Ctrl+C de nuevo para confirmar · Esc cancela")
+		m.append("notice", "¿Salir? Pulsa Ctrl+C de nuevo para confirmar · Esc cancela")
 		return m, tea.Tick(3*time.Second, func(t time.Time) tea.Msg { return quitConfirmMsg{} })
 
 	case "esc":
@@ -549,35 +574,14 @@ func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "ctrl+p", "alt+p":
+	case "pgup":
 		m.quitArmed = false
-		m.loadTodoList()
-		m.todoCursor = 0
-		m.showTodo = true
+		m.scrollBy(m.height - 4)
 		return m, nil
 
-	case "ctrl+m", "alt+m":
+	case "pgdown":
 		m.quitArmed = false
-		m.mcpCursor = 0
-		m.showMCP = true
-		return m, nil
-
-	case "ctrl+h", "alt+h":
-		m.quitArmed = false
-		m.helpOpen = true
-		return m, nil
-
-	case "pgup", "ctrl+u":
-		m.quitArmed = false
-		m.scrollOffset += m.height - 4
-		return m, nil
-
-	case "pgdown", "ctrl+d":
-		m.quitArmed = false
-		m.scrollOffset -= m.height - 4
-		if m.scrollOffset < 0 {
-			m.scrollOffset = 0
-		}
+		m.scrollBy(-(m.height - 4))
 		return m, nil
 
 	case "tab":
@@ -1032,7 +1036,8 @@ func (m Model) renderTranscript(limit int) string {
 		m.scrollOffset = 0
 	}
 	start := maxOffset - m.scrollOffset
-	visible := wrapped[start:]
+	end := min(start+limit, len(wrapped))
+	visible := wrapped[start:end]
 	return strings.Join(visible, "\n")
 }
 
@@ -1083,33 +1088,36 @@ func (m Model) renderHelp() string {
 		"  /help, /?   Muestra esta ayuda",
 		"  /quit, /exit  Sale de forgen",
 		"",
-		"Atajos de teclado (cuchara: requieren Ctrl):",
-		"  Enter       Envía el mensaje",
-		"  Tab         Cambia agente (build ↔ plan)",
-		"  Ctrl+P      Ver plan/tareas (todowrite) — también /todo",
-		"  Ctrl+M      MCP servidores — también /mcp",
-		"  Ctrl+H      Abre esta ayuda — también /help",
-		"  PgUp/PgDn   Desplazan la conversación (también Ctrl+U / Ctrl+D)",
-		"  Ctrl+C      Cancela la petición en curso",
-		"  Ctrl+Q/C    Salir (pulsar 2 veces · Esc cancela)",
-		"  Esc         Cierra overlays / cancela salida",
+		"Atajos (no requieren Ctrl; las teclas de edición quedan libres):",
+		"  Enter        Envía el mensaje",
+		"  Tab          Cambia agente (build ↔ plan)",
+		"  PgUp / PgDn  Desplazan la conversación",
+		"  Rueda ratón  Desplaza la conversación (trackpad también)",
+		"  Ctrl+C       Cancela la petición en curso · pulsar 2× para salir",
+		"  Esc          Cierra overlays / cancela salida",
+		"",
+		"Ver también: /todo (plan), /mcp (servidores), /help (esta ayuda).",
+		"Las teclas de edición estándar (Ctrl+U/D/H/W/A/E…) funcionan en el campo,",
+		"para que los atajos de tu editor y de macOS no se bloqueen.",
 		"",
 		"Consejo: la primera vez escribe /init para conectar tu proveedor favorito",
 		"(OpenAI, Anthropic, OpenRouter, Groq, Ollama y más). Solo necesitas tu API key.",
 		"",
-		m.styles.dim.Render("(Esc o q para cerrar ayuda — Ctrl+H también)"),
+		m.styles.dim.Render("(Esc o q para cerrar ayuda)"),
 	}
 	return strings.Join(lines, "\n")
 }
 
 func (m Model) renderStatus() string {
+	// Prompt estilo shell con el color de marca forgen: "~/proj $ build"
+	prompt := fmt.Sprintf("%s $ %s", m.workspace, m.agentName)
 	left := ""
 	if m.running {
 		left += m.styles.accent.Render(spinnerFrames[m.spinnerIndex])
 	} else {
 		left += m.styles.dim.Render("●")
 	}
-	left += " " + m.styles.dim.Render(fmt.Sprintf("agente:%s", m.agentName))
+	left += " " + m.styles.accent.Render(prompt)
 	left += " " + m.styles.dim.Render(fmt.Sprintf("modelo:%s", m.modelKey))
 	if m.phase != "" {
 		left += " " + m.styles.accent.Render(fmt.Sprintf("fase:%s", m.phase))
@@ -1124,11 +1132,11 @@ func (m Model) renderStatus() string {
 	} else if m.running {
 		right = m.styles.dim.Render("trabajando... · Ctrl+C cancela")
 	} else if m.quitArmed {
-		right = m.styles.notice.Render("¿Salir? Ctrl+Q/C de nuevo · Esc cancela")
+		right = m.styles.notice.Render("¿Salir? Ctrl+C de nuevo · Esc cancela")
 	} else if m.noConfig {
 		right = m.styles.notice.Render("sin configurar — escribe /init")
 	} else {
-		right = m.styles.dim.Render("Ctrl+P plan · Ctrl+M mcp · Ctrl+H ayuda · / comandos · Tab agente")
+		right = m.styles.dim.Render("/ comandos · Tab agente · rueda/PgUp desplaza")
 	}
 	if m.width > 0 {
 		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
@@ -1144,7 +1152,17 @@ func (m Model) renderInput() string {
 	if m.confirming {
 		return m.styles.notice.Render(fmt.Sprintf("❯ ¿Permitir ejecutar %s? [y/N, ? detalle]", toolCallLabel(m.confirmCall)))
 	}
-	return m.input.View()
+	// Barra de escritura con borde de marca: siempre clara dónde escribir.
+	borderColor := m.styles.accent.GetForeground()
+	bar := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor).
+		PaddingLeft(1).
+		PaddingRight(1)
+	if m.width > 2 {
+		bar = bar.Width(m.width - 2)
+	}
+	return bar.Render(m.input.View())
 }
 
 // flushAssistant vuelca el texto acumulado del asistente al transcript.

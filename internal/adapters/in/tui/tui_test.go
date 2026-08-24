@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -116,6 +117,78 @@ func slashCommandKind(cmd string) string {
 	return ""
 }
 
+// --- Scroll / transcript ---
+
+func manyLines(n int) []transcriptLine {
+	lines := make([]transcriptLine, 0, n)
+	for i := 0; i < n; i++ {
+		lines = append(lines, transcriptLine{kind: "user", text: fmt.Sprintf("línea %d", i)})
+	}
+	return lines
+}
+
+func TestRenderTranscriptKeepsLimit(t *testing.T) {
+	m := Model{styles: newStyles(domain.DefaultTheme()), width: 80, height: 24}
+	m.transcript = manyLines(50)
+	limit := m.height - 4 // 20
+	out := m.renderTranscript(limit)
+	if got := len(strings.Split(out, "\n")); got != limit {
+		t.Fatalf("renderTranscript devolvió %d líneas, quiero %d", got, limit)
+	}
+	// Sin scroll debe mostrar las últimas líneas (fondo) y no las primeras.
+	if !strings.Contains(out, "línea 49") {
+		t.Fatalf("esperaba la última línea al fondo:\n%s", out)
+	}
+	if strings.Contains(out, "línea 0") {
+		t.Fatalf("no debería mostrarse la primera línea al fondo:\n%s", out)
+	}
+}
+
+func TestRenderTranscriptScrollUpRevealsStart(t *testing.T) {
+	m := Model{styles: newStyles(domain.DefaultTheme()), width: 80, height: 24}
+	m.transcript = manyLines(50)
+	limit := m.height - 4
+	// Subir del todo: debe verse la primera línea y seguir acotado a 'limit'.
+	m.scrollOffset = 50 - limit
+	out := m.renderTranscript(limit)
+	if !strings.Contains(out, "línea 0") {
+		t.Fatalf("al subir del todo debería verse la primera línea:\n%s", out)
+	}
+	if got := len(strings.Split(out, "\n")); got != limit {
+		t.Fatalf("al subir renderTranscript devolvió %d líneas, quiero %d", got, limit)
+	}
+}
+
+func TestScrollByClamps(t *testing.T) {
+	m := Model{width: 80, height: 24}
+	m.transcript = manyLines(1)
+	m.scrollBy(+100)
+	if m.scrollOffset != 0 {
+		t.Fatalf("scrollOffset=%d, quiero 0 (no desbordar el transcript)", m.scrollOffset)
+	}
+	m.scrollBy(-100)
+	if m.scrollOffset != 0 {
+		t.Fatalf("scrollOffset=%d tras bajar, quiero 0", m.scrollOffset)
+	}
+}
+
+func TestMouseWheelScroll(t *testing.T) {
+	m := Model{styles: newStyles(domain.DefaultTheme()), width: 80, height: 24}
+	m.transcript = manyLines(50)
+
+	upd, _ := m.handleMouse(tea.MouseMsg{Button: tea.MouseButtonWheelUp})
+	mm := upd.(Model)
+	if mm.scrollOffset != 3 {
+		t.Fatalf("scrollOffset=%d tras wheel up, quiero 3", mm.scrollOffset)
+	}
+
+	down, _ := mm.handleMouse(tea.MouseMsg{Button: tea.MouseButtonWheelDown})
+	mm2 := down.(Model)
+	if mm2.scrollOffset != 0 {
+		t.Fatalf("scrollOffset=%d tras wheel down, quiero 0", mm2.scrollOffset)
+	}
+}
+
 // --- Permission detail ---
 
 func TestPermissionDetail(t *testing.T) {
@@ -136,7 +209,7 @@ func TestPermissionDetail(t *testing.T) {
 func TestHelpContent(t *testing.T) {
 	m := Model{styles: newStyles(domain.DefaultTheme())}
 	help := m.renderHelp()
-	for _, wanted := range []string{"/init", "/provider", "/model", "PgUp/PgDn", "Tab"} {
+	for _, wanted := range []string{"/init", "/provider", "/model", "PgUp", "ratón", "Tab"} {
 		if !strings.Contains(help, wanted) {
 			t.Errorf("la ayuda debería mencionar %q", wanted)
 		}

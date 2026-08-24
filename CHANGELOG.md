@@ -4,6 +4,21 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-1.1.0/) y
 el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 
+## [0.1.8] - 2026-08-24
+
+### Añadido
+
+- **Scroll por ratón/trackpad**: rueda del ratón desplaza la conversación (`tea.WithMouseCellMotion` + `MouseButtonWheelUp/Down` en `internal/adapters/in/tui/model.go`), como en Claude Code/opencode.
+- **Color de marca (Lima ácida `#A6D93B`)**: `Accent` del tema por defecto y línea de estado rediseñada como prompt estilo shell `~/proj $ build` en el color de marca; la barra de escritura ahora tiene borde de marca y queda siempre anclada al fondo.
+
+### Cambiado
+
+- **Se liberan las teclas de edición**: se quitan los atajos `Ctrl` que chocaban con la edición estándar de VS Code/macOS/readline (`Ctrl+U/D/H/P/M/Q` y variantes `Alt`). Ahora `Ctrl+U/D/H/W/A/E…` funcionan dentro del campo; la navegación es `PgUp/PgDn` + ratón y todo el control de la app va por `/comandos` (`/todo`, `/mcp`, `/help`, `/quit`). `Ctrl+C` sigue cancelando/saliendo (doble pulso).
+
+### Corregido
+
+- **Scroll del transcript**: la ventana visible ahora devuelve exactamente `limit` líneas (`wrapped[start:start+limit]`), de modo que la barra de estado y el input ya no se empujan fuera de pantalla al subir; al terminar una petición el scroll vuelve al fondo.
+
 ## [0.1.0] - 2026-08-20
 
 ### Añadido
@@ -87,6 +102,7 @@ el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 - **Validación/listado de modelos con timeout (15s)**: el paso "Validando..." y
   el listado en vivo de `/model` no se quedan colgados si el proveedor tarda.
 
+[0.1.8]: https://github.com/rodascaar/forgen/releases/tag/v0.1.8
 [0.1.7]: https://github.com/rodascaar/forgen/releases/tag/v0.1.7
 [0.1.6]: https://github.com/rodascaar/forgen/releases/tag/v0.1.6
 [0.1.0]: https://github.com/rodascaar/forgen/releases/tag/v0.1.0

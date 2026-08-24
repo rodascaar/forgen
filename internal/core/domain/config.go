@@ -85,7 +85,7 @@ func DefaultTheme() Theme {
 		ToolDone:  "#9ece6a",
 		Notice:    "#e0af68",
 		Error:     "#f7768e",
-		Accent:    "#bb9af7",
+		Accent:    "#A6D93B", // Lima ácida — color de marca forgen
 		Dim:       "#565f89",
 	}
 }
