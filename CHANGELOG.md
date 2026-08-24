@@ -35,6 +35,20 @@ el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 - **Subagentes orquestados** con `RunnerFactory` aislado por tipo (`internal/adapters/out/task/executor.go` + `internal/app/app.go:179`), `LoadSubAgentRegistry` desde `.forgen/agents/<type>.md` frontmatter, y `docs/ARCHITECTURE.md` con diagrama harness.
 - **Permisos `remember` fx-style** (`forgen permissions remember/revoke`, stable sha256, `internal/adapters/in/cli/permissions.go`) y tests `http_test.go` + `service_wildcard_test.go`.
 
+## [0.1.7] - 2026-08-24
+
+### Añadido
+
+- **README práctico (Standard Readme)**: reescrito para responder ¿qué es?/¿para qué sirve?/¿cómo lo uso ahora? con badges, TOC, Quick Start copy-paste y sin referencias a implementaciones internas.
+
+### Cambiado
+
+- **TUI modo cuchara**: ninguna letra sola abre menús — `q`/`p`/`m`/`?` ya escriben siempre. Atajos ahora requieren `Ctrl` (`Ctrl+P` plan, `Ctrl+M` mcp, `Ctrl+H` ayuda, `Ctrl+U/D` scroll) con alias `Alt` para `Cmd` en Mac; `Tab` sigue cambiando `build↔plan`; salida requiere doble `Ctrl+C`/`Ctrl+Q` con `Esc` cancela y footer siempre visible.
+
+### Corregido
+
+- **CI Lint `S1023`**: `redundant break` en `case "esc"` de `internal/adapters/in/tui/model.go:550`.
+
 ## [No liberado]
 
 ### Añadido
@@ -73,4 +87,6 @@ el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 - **Validación/listado de modelos con timeout (15s)**: el paso "Validando..." y
   el listado en vivo de `/model` no se quedan colgados si el proveedor tarda.
 
+[0.1.7]: https://github.com/rodascaar/forgen/releases/tag/v0.1.7
+[0.1.6]: https://github.com/rodascaar/forgen/releases/tag/v0.1.6
 [0.1.0]: https://github.com/rodascaar/forgen/releases/tag/v0.1.0
