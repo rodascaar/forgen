@@ -39,7 +39,7 @@ func MigrateFromWellKnownPaths() (map[string]domain.MCPServerConfig, error) {
 }
 
 func migrateClaudeCode(path string, out map[string]domain.MCPServerConfig) error {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(filepath.Clean(path)) //nolint:gosec // path proviene de constantes/env controlados
 	if err != nil {
 		return err
 	}
@@ -76,7 +76,7 @@ func migrateClaudeCode(path string, out map[string]domain.MCPServerConfig) error
 }
 
 func migrateOpenCode(path string, out map[string]domain.MCPServerConfig) error {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(filepath.Clean(path)) //nolint:gosec // path proviene de constantes/env controlados
 	if err != nil {
 		return err
 	}
@@ -116,7 +116,7 @@ func migrateOpenCode(path string, out map[string]domain.MCPServerConfig) error {
 }
 
 func migrateCursor(path string, out map[string]domain.MCPServerConfig) error {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(filepath.Clean(path)) //nolint:gosec // path proviene de constantes/env controlados
 	if err != nil {
 		return err
 	}

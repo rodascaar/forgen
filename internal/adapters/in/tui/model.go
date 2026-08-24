@@ -53,6 +53,8 @@ type Model struct {
 	showTodo        bool
 	todoList        *domain.TodoList
 	todoCursor      int
+	showMCP         bool
+	mcpCursor       int
 	width           int
 	height          int
 	quitting        bool
@@ -209,6 +211,68 @@ func (m Model) renderTodoOverlay() string {
 	return b.String()
 }
 
+func (m Model) renderMCPOverlay() string {
+	var b strings.Builder
+	b.WriteString(m.styles.accent.Render("MCP — servidores") + "\n\n")
+	appConfig, err := m.app.LoadConfig(context.Background())
+	if err != nil {
+		b.WriteString(m.styles.err.Render(fmt.Sprintf("error cargando config: %v", err)) + "\n")
+		return b.String()
+	}
+	if len(appConfig.MCPServers) == 0 {
+		b.WriteString(m.styles.dim.Render("(sin servidores — forgen mcp add <nombre>)") + "\n")
+		b.WriteString(m.styles.dim.Render("migrate: forgen mcp migrate  · test: forgen mcp test <nombre>") + "\n")
+	} else {
+		// Lista estable para cursor
+		names := make([]string, 0, len(appConfig.MCPServers))
+		for name := range appConfig.MCPServers {
+			names = append(names, name)
+		}
+		sortStrings(names)
+		for i, name := range names {
+			srv := appConfig.MCPServers[name]
+			typ := srv.MCPServerType()
+			target := srv.Command
+			if srv.URL != "" {
+				target = srv.URL
+			}
+			if target == "" {
+				target = "(sin comando/url)"
+			}
+			marker := "  "
+			if i == m.mcpCursor {
+				marker = "▸ "
+			}
+			line := fmt.Sprintf("%s%s  %-6s  %s", marker, name, typ, target)
+			if i == m.mcpCursor {
+				line = m.styles.accent.Render(line)
+			} else {
+				line = m.styles.toolDone.Render(line)
+			}
+			b.WriteString(line + "\n")
+		}
+	}
+	// Tools registradas dinámicamente
+	if m.app.ToolRegistry != nil {
+		tools := m.app.ToolRegistry.ListTools()
+		count := 0
+		for _, t := range tools {
+			if len(t.Name) > 4 && (contains(t.Name, "_")) {
+				// heurística: tools mcp contienen "_" prefijo servidor
+				count++
+			}
+		}
+		b.WriteString("\n" + m.styles.dim.Render(fmt.Sprintf("tools registradas: %d (mcp_* incluidas)", count)))
+	}
+	b.WriteString("\n\n" + m.styles.dim.Render("Comandos: forgen mcp add <nombre> --type stdio --command npx  ·  --type http --url https://..."))
+	b.WriteString("\n" + m.styles.dim.Render("(↑/↓ mover · Esc/q cerrar · /mcp para alternar)"))
+	return b.String()
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && (s[0:len(substr)] == substr || contains(s[1:], substr)))
+}
+
 // Init implementa tea.Model. El setup (incluido el foco del input) se hace en
 // newModel para que persista; Init solo arranca el parpadeo del cursor.
 func (m Model) Init() tea.Cmd {
@@ -352,6 +416,23 @@ func (m *Model) resetConfirm() {
 }
 
 func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Overlay de MCP: navegación simple
+	if m.showMCP {
+		switch message.String() {
+		case "esc", "q", "ctrl+c", "m", "M":
+			m.showMCP = false
+		case "up", "k":
+			if m.mcpCursor > 0 {
+				m.mcpCursor--
+			}
+		case "down", "j":
+			appConfig, _ := m.app.LoadConfig(context.Background())
+			if m.mcpCursor < len(appConfig.MCPServers)-1 {
+				m.mcpCursor++
+			}
+		}
+		return m, nil
+	}
 	// Overlay de todo: navegación y toggle
 	if m.showTodo {
 		switch message.String() {
@@ -454,6 +535,18 @@ func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.showTodo = !m.showTodo
 		return m, nil
 
+	case "m", "M":
+		if m.input.Value() != "" {
+			break
+		}
+		if m.showMCP {
+			m.showMCP = false
+			return m, nil
+		}
+		m.mcpCursor = 0
+		m.showMCP = true
+		return m, nil
+
 	case "pgup":
 		m.scrollOffset += m.height - 4
 		return m, nil
@@ -526,6 +619,10 @@ func (m Model) handleSlash(command string) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "/task":
 		return m.openTaskPicker()
+	case "/mcp":
+		m.mcpCursor = 0
+		m.showMCP = true
+		return m, nil
 	case "/diff":
 		diff, _ := m.app.Git.Diff(context.Background(), ".", false)
 		if diff == "" {
@@ -865,6 +962,9 @@ func (m Model) View() string {
 	if m.picker != nil {
 		return m.picker.View()
 	}
+	if m.showMCP {
+		return m.renderMCPOverlay()
+	}
 	if m.showTodo {
 		return m.renderTodoOverlay()
 	}
@@ -941,6 +1041,7 @@ func (m Model) renderHelp() string {
 		"  /sessions   Retoma una sesión guardada",
 		"  /todo, /plan Visualiza la lista de tareas (todowrite)",
 		"  /task       Lista sub-agentes",
+		"  /mcp        MCP servidores (M para toggle)",
 		"  /diff       Muestra diff del working tree",
 		"  /commit     Muestra diff para commit",
 		"  /review     Code review del diff (sub-agente)",
@@ -955,6 +1056,7 @@ func (m Model) renderHelp() string {
 		"  Enter       Envía el mensaje",
 		"  Tab         Cambia agente (build ↔ plan)",
 		"  P           Ver plan/tareas (todowrite)",
+		"  M           MCP servidores",
 		"  ?           Abre esta ayuda",
 		"  PgUp/PgDn   Desplazan la conversación",
 		"  Ctrl+C      Cancela la petición en curso / sale",
