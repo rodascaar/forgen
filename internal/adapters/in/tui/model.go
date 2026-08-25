@@ -674,6 +674,9 @@ func (m Model) handleSlash(command string) (tea.Model, tea.Cmd) {
 		return m.openModelPicker()
 	case "/sessions":
 		return m.openSessionsPicker()
+	case "/new":
+		m.startNewSession()
+		return m, nil
 	case "/todo", "/plan":
 		m.loadTodoList()
 		m.todoCursor = 0
@@ -857,8 +860,23 @@ func (m Model) openSessionsPicker() (tea.Model, tea.Cmd) {
 		}
 		items = append(items, pickerItem{label: session.ID, detail: detail, value: session.ID})
 	}
+	// Opción al final para arrancar una sesión limpia.
+	items = append(items, pickerItem{label: "＋ Nueva sesión", detail: "Empezar una conversación desde cero", value: newSessionSentinel})
 	m.picker = newPickerModel(pickerSessionKind, "Retomar una sesión", items, m.styles, m.width, m.height)
 	return m, nil
+}
+
+// newSessionSentinel es el valor que el picker devuelve para iniciar sesión nueva.
+const newSessionSentinel = "__new_session__"
+
+// startNewSession reinicia el estado para crear una sesión nueva: limpia el
+// transcript y libera la sesión activa para que el próximo run cree una nueva.
+func (m *Model) startNewSession() {
+	m.sessionID = ""
+	m.transcript = nil
+	m.assistantBuffer = ""
+	m.scrollOffset = 0
+	m.append("notice", "Sesión nueva. Describe tu tarea…")
 }
 
 // openTaskPicker abre el selector de sub-agentes.
@@ -926,6 +944,10 @@ func (m *Model) applyPickerSelection(selection pickerSelectedMsg) {
 		m.append("notice", fmt.Sprintf("Modelo por defecto: %s", selection.value))
 
 	case pickerSessionKind:
+		if selection.value == newSessionSentinel {
+			m.startNewSession()
+			return
+		}
 		m.sessionID = selection.value
 		appConfig, _ := m.app.LoadConfig(ctx)
 		m.applyConfig(appConfig)
@@ -1184,6 +1206,7 @@ func (m Model) renderHelp() string {
 		"  /provider   Cambia el proveedor por defecto",
 		"  /model      Elige el modelo por defecto (listado en vivo)",
 		"  /sessions   Retoma una sesión guardada",
+		"  /new        Inicia una sesión nueva",
 		"  /todo, /plan Visualiza la lista de tareas (todowrite)",
 		"  /task       Lista sub-agentes",
 		"  /mcp        MCP servidores",

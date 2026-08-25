@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	apppkg "github.com/rodascaar/forgen/internal/app"
+	"github.com/rodascaar/forgen/internal/core/domain"
 	"github.com/spf13/cobra"
 )
 
@@ -19,6 +21,32 @@ func newSessionsCommand(app *apppkg.App) *cobra.Command {
 			return runListSessions(cmd.Context(), app)
 		},
 	}
+	command.AddCommand(&cobra.Command{
+		Use:   "new",
+		Short: "Crea una sesión nueva",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			workspace, err := os.Getwd()
+			if err != nil {
+				return fmt.Errorf("resolver workspace: %w", err)
+			}
+			appConfig, err := app.LoadConfig(cmd.Context())
+			if err != nil {
+				appConfig = domain.DefaultAppConfig()
+			}
+			model := resolveModelFromConfig(appConfig)
+			agentDef, err := app.SelectedAgent(appConfig, appConfig.Agent)
+			if err != nil {
+				return err
+			}
+			session, err := app.SessionService.Create(cmd.Context(), workspace, model, agentDef.Name)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Sesión creada: %s\n", session.ID)
+			fmt.Println("Usa 'forgen ask --session " + session.ID + " \"tu prompt\"' para empezar.")
+			return nil
+		},
+	})
 	command.AddCommand(&cobra.Command{
 		Use:   "resume [id]",
 		Short: "Resume una sesión existente",
@@ -111,4 +139,17 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// resolveModelFromConfig deriva un modelo (provider/id) desde la config efectiva.
+func resolveModelFromConfig(cfg domain.AppConfig) domain.Model {
+	provider := cfg.Default.Provider
+	id := cfg.Default.Model
+	if i := strings.IndexByte(id, '/'); i >= 0 {
+		if id[:i] != "" {
+			provider = id[:i]
+		}
+		id = id[i+1:]
+	}
+	return domain.Model{Provider: provider, ID: id}
 }

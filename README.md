@@ -72,6 +72,7 @@ forgen ask "tu prompt"              # una petición headless
 forgen ask --session <id> "sigue"   # continuar sesión
 forgen sessions                     # listar sesiones guardadas
 forgen sessions resume <id>         # ver sesión
+forgen sessions new                 # crear una sesión nueva
 forgen config                       # config efectiva
 forgen provider list                # proveedores y modelos
 forgen provider add openai          # añadir proveedor
@@ -90,6 +91,8 @@ Escribir es siempre seguro: **ninguna letra sola abre menús**. Todo es `/comand
 | `/provider` | Cambia proveedor por defecto |
 | `/model` | Cambia modelo (listado en vivo) |
 | `/sessions` | Retoma sesión guardada |
+| `/new` | Inicia una sesión nueva |
+| `/resume` | Reanuda una sesión por ID |
 | `/todo` `/plan` | Ver lista de tareas |
 | `/task` | Ver sub-agentes |
 | `/mcp` | Ver servidores MCP |
@@ -161,6 +164,7 @@ forgen mcp test filesystem
 ## Herramientas y capacidades
 
 - **Edición segura:** `read` `write` `edit` `glob` `grep` `bash` `git_status` `git_diff` — sobre puertos inyectables, testeables sin tocar disco.
+- **Git interno vs git del usuario:** forgen mantiene un versionado propio por snapshots del workspace (`~/.local/share/forgen/workspaces/`). `git_status`/`git_diff` **siempre funcionan**: si el proyecto es un repo git real usan ese; si no, usan el tracking interno — así el agente nunca ve errores en rojo y puede razonar/revertir cambios con `/undo` sin depender de que hayas configurado git.
 - **LSP opcional:** si `gopls`, `typescript-language-server`, `rust-analyzer` o `pyright` están instalados, forgen usa `lsp_diagnostics` `lsp_hover` `lsp_definition` `lsp_references` `lsp_rename`.
 - **MCP:** `stdio` / `http` / `sse`. Tools como `<server>_<tool>`. `forgen mcp add <nombre> --type http --url https://...` · `forgen mcp migrate` importa servidores existentes sin sobrescribir.
 - **Búsqueda web:** `web_search` (Brave) + `web_fetch` (extrae texto de URL). Config: `search.provider: brave`.

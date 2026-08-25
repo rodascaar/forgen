@@ -4,6 +4,17 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-1.1.0/) y
 el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 
+## [0.1.15] - 2026-08-24
+
+### Añadido
+
+- **Crear sesión nueva**: comando `/new` en la TUI y opción "＋ Nueva sesión" al final del picker `/sessions`; también `forgen sessions new` en el CLI. Una vez activa una sesión ya se puede empezar una limpia sin reiniciar.
+- **Git interno vs git del usuario**: tracking propio de forgen por snapshots del workspace (`FORGEN_DATA_DIR/workspaces/`). `git_status`/`git_diff` siempre funcionan: si el proyecto es un repo git real usan ese; si no, usan el versionado interno — el agente ya no ve errores en rojo cuando el cliente no inicializó git, y puede razonar/revertir cambios con `/undo`.
+
+### Corregido
+
+- **`git_status`/`git_diff` fallaban en workspaces sin repo git**: ahora el adapter combinado delega al git real si `IsRepo`, y al tracking interno si no; nunca depende de que el usuario configure git.
+
 ## [0.1.14] - 2026-08-24
 
 ### Añadido

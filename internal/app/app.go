@@ -147,7 +147,7 @@ func NewApp(logger *slog.Logger) (*App, error) {
 
 	fileSystem := fs.New(workspace)
 	executor := buildExecutor(workspace, appConfig, paths, logger)
-	gitCLI := gitadapter.New()
+	gitCLI := gitadapter.NewCombined(gitadapter.New(), filepath.Join(paths.DataDir, "workspaces"))
 
 	// LSP: detectar lenguaje y arrancar el language server (si está instalado).
 	lspManager := lsp.NewManager(context.Background(), language.NewDetector(), fileSystem, workspace, logger)
