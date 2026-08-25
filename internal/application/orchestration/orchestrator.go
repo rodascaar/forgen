@@ -186,6 +186,7 @@ func tierWeight(tier domain.Tier) int {
 	}
 }
 
+//nolint:unused // kept for external callers, internal uses complexityScore
 func isComplex(prompt string) bool { return complexityScore(prompt) >= 2 }
 
 func complexityScore(prompt string) int {

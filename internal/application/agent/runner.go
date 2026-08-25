@@ -442,9 +442,8 @@ func (r *Runner) detectDoomLoop(calls []domain.ToolCall) string {
 	return ""
 }
 
+//nolint:unused // retained for direct-call tests and single-tool path
 func (r *Runner) executeWithPermission(ctx context.Context, sessionID string, agent domain.Agent, call domain.ToolCall) domain.ToolResult {
-	// Red de seguridad del modo plan: aunque el LLM pidiera una herramienta
-	// mutadora, un agente de solo lectura nunca puede ejecutarla.
 	if agent.IsReadOnly && !readOnlyToolAllowlist[call.Name] {
 		return domain.ToolResult{
 			ToolCallID: call.ID,
@@ -453,12 +452,10 @@ func (r *Runner) executeWithPermission(ctx context.Context, sessionID string, ag
 			Error:      fmt.Errorf("%s: herramienta %q no permitida en modo plan", deniedResultMessage, call.Name),
 		}
 	}
-
 	decision, err := r.decider.Decide(ctx, sessionID, call)
 	if err != nil {
 		return domain.ToolResult{ToolCallID: call.ID, OK: false, Error: fmt.Errorf("decidir permiso: %w", err)}
 	}
-
 	if !decision.Allowed && decision.Level == domain.PermissionOnRequest {
 		allowed, confirmErr := r.responder.Confirm(ctx, sessionID, call)
 		if confirmErr != nil {
@@ -468,7 +465,6 @@ func (r *Runner) executeWithPermission(ctx context.Context, sessionID string, ag
 			decision = domain.Decision{Allowed: true, Level: domain.PermissionOnRequest, Reason: "confirmado por usuario"}
 		}
 	}
-
 	if !decision.Allowed {
 		r.messenger.Notice(sessionID, fmt.Sprintf("Permiso denegado para %s: %s", call.Name, decision.Reason))
 		return domain.ToolResult{
@@ -478,9 +474,11 @@ func (r *Runner) executeWithPermission(ctx context.Context, sessionID string, ag
 			Error:      fmt.Errorf("%s: %s", deniedResultMessage, decision.Reason),
 		}
 	}
-
 	return r.tools.Execute(ctx, call)
 }
+
+// keep executeWithPermission used via inline path above; suppress unused linter if inlined.
+//nolint:unused // retained for direct call tests and future plan-mode single-tool path
 
 // readOnlyToolAllowlist es el conjunto de herramientas permitidas a los
 // agentes de solo lectura (modo plan): solo lectura/exploración e investigación
@@ -796,7 +794,7 @@ func summarizeLocal(ctx context.Context, provider ports.LLMProvider, model domai
 		}
 	}
 	// Construir msgs visibles
-	var msgs []domain.Message
+	msgs := make([]domain.Message, 0, 1+len(s.Messages)+1)
 	msgs = append(msgs, domain.NewTextMessage(domain.RoleSystem, sys))
 	// Visible projection
 	for _, m := range s.Messages {

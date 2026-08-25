@@ -31,19 +31,25 @@ func (s *Service) AppendCompaction(summary string) {
 		return
 	}
 	path := s.WorkspacePath()
+	// G703: workspace validated via App.Workspace absolute, Clean guard
+	clean := filepath.Clean(path)
+	if !strings.HasPrefix(clean, filepath.Clean(s.workspace)) {
+		return
+	}
+	path = clean
 	_ = os.MkdirAll(filepath.Dir(path), 0755)
 	entry := "\n\n## compaction " + time.Now().Format("2006-01-02 15:04") + "\n" + strings.TrimSpace(summary) + "\n"
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600) //nolint:gosec // G302 workspace file 0600
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	_, _ = f.WriteString(entry)
 	// cap file at ~20k chars (keep tail)
 	if info, err := os.Stat(path); err == nil && info.Size() > 20000 {
 		data, _ := os.ReadFile(path)
 		if len(data) > 20000 {
-			_ = os.WriteFile(path, data[len(data)-20000:], 0644)
+			_ = os.WriteFile(path, data[len(data)-20000:], 0600) //nolint:gosec // G703 validated above
 		}
 	}
 }

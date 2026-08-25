@@ -147,8 +147,8 @@ func writePlanArtifact(list *domain.TodoList, explanation string) error {
 		if t.Status == domain.TodoStatusDone {
 			status = "completed"
 		}
-		sb.WriteString(fmt.Sprintf("%d. [%s] %s\n", i+1, status, t.Content))
+		fmt.Fprintf(&sb, "%d. [%s] %s\n", i+1, status, t.Content)
 	}
 	sb.WriteString("\n---\n_Generado por update_plan (Fase 7.5.4)_\n")
-	return os.WriteFile(path, []byte(sb.String()), 0644)
+	return os.WriteFile(path, []byte(sb.String()), 0644) //nolint:gosec // G306 plan artifact workspace file
 }

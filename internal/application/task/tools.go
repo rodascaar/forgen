@@ -49,7 +49,7 @@ func NewTool(store ports.TaskStore, executor ports.TaskExecutor) tools.ToolDef {
 				return domain.ToolResult{OK: false, Error: fmt.Errorf("guardar task: %w", err)}
 			}
 			if args.RunInBackground {
-				go func() { _, _ = executor.Execute(context.Background(), task) }()
+				go func() { _, _ = executor.Execute(context.WithoutCancel(ctx), task) }() //nolint:gosec // G118 detached background task
 				return domain.ToolResult{OK: true, Output: fmt.Sprintf("Task %s lanzada en background (subagent_type=%s). Usa 'forgen task list' o 'task status %s'", task.ID, tType, task.ID)}
 			}
 			// Ejecutar sincrónicamente y devolver resultado

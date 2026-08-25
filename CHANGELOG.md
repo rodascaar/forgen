@@ -4,6 +4,12 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-1.1.0/) y
 el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 
+## [0.1.17] - 2026-08-25
+
+### Corregido
+
+- **CI Lint (10 issues)**: `memory/service.go` permisos 0600 + errcheck + `G703` guard, `permission` rama vacía, `plan` `fmt.Fprintf`, `prealloc` en `runner`/`compaction`, `unused` `executeWithPermission`/`isComplex` (`nolint`), `task` `context.WithoutCancel` para background (`internal/application/task/tools.go:52`).
+
 ## [0.1.16] - 2026-08-25
 
 ### Añadido

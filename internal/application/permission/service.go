@@ -170,12 +170,6 @@ func (s *Service) isPreToolBlocked(call domain.ToolCall) (bool, string) {
 			return true, "PreToolUse block: edición de archivo sensible (.env/secret) denegada determinísticamente"
 		}
 	}
-	// Bloquear edit/write que contenga secrets en el contenido (heurística simple)
-	if content, ok := call.Arguments["content"].(string); ok {
-		if strings.Contains(strings.ToLower(content), "api_key") && strings.Contains(content, "sk-") {
-			// no bloquear, solo warning via on_request (no hard block)
-		}
-	}
 	return false, ""
 }
 

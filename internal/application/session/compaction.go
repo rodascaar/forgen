@@ -305,7 +305,7 @@ func (c *CompactionService) Summarize(ctx context.Context, session domain.Sessio
 	// Construir historial para el LLM: mensajes visibles (con placeholders) + userMsg de resumen.
 	msgs := VisibleMessages(session)
 	// Filtro: no enviar system previos, solo user/assistant/tool visibles.
-	var llmMsgs []domain.Message
+	llmMsgs := make([]domain.Message, 0, 1+len(msgs)+1)
 	llmMsgs = append(llmMsgs, domain.NewTextMessage(domain.RoleSystem, systemPrompt))
 	llmMsgs = append(llmMsgs, msgs...)
 	llmMsgs = append(llmMsgs, domain.NewTextMessage(domain.RoleUser, userMsg))
