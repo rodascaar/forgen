@@ -99,11 +99,21 @@ func (o *OSFileSystem) Search(_ context.Context, root, query, include string) ([
 
 	base := o.resolve(".")
 	searchRoot := o.resolve(root)
+	gitignore := o.loadGitignore(base)
 	matches := make([]ports.SearchMatch, 0, 32)
 
 	walkErr := filepath.WalkDir(searchRoot, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return nil // ignorar errores de archivos no legibles
+		}
+		// .gitignore check para dirs y files (rel a base)
+		if rel, err := filepath.Rel(base, path); err == nil {
+			if o.ignoredByGitignore(rel, entry.IsDir(), gitignore) {
+				if entry.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
 		}
 		if entry.IsDir() {
 			if path != searchRoot && ignoredDirectories[entry.Name()] {
@@ -159,6 +169,49 @@ func (o *OSFileSystem) Search(_ context.Context, root, query, include string) ([
 		return nil, walkErr
 	}
 	return matches, nil
+}
+
+func (o *OSFileSystem) loadGitignore(base string) []string {
+	data, err := os.ReadFile(filepath.Join(base, ".gitignore"))
+	if err != nil {
+		return nil
+	}
+	var patterns []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		// Normalizar: quitar "/" inicial
+		line = strings.TrimPrefix(line, "/")
+		patterns = append(patterns, line)
+	}
+	return patterns
+}
+
+func (o *OSFileSystem) ignoredByGitignore(rel string, isDir bool, patterns []string) bool {
+	if len(patterns) == 0 {
+		return false
+	}
+	relSlash := filepath.ToSlash(rel)
+	for _, pat := range patterns {
+		// doublestar match con ** prefix para dirs
+		matchPat := pat
+		if isDir && !strings.HasSuffix(matchPat, "/") && !strings.Contains(matchPat, "/") {
+			matchPat = matchPat + "/**"
+		}
+		if !strings.Contains(matchPat, "/") {
+			matchPat = "**/" + matchPat
+		}
+		if ok, _ := doublestar.Match(matchPat, relSlash); ok {
+			return true
+		}
+		// también prefijo directo
+		if strings.HasPrefix(relSlash, strings.TrimSuffix(pat, "/")+"/") || relSlash == strings.TrimSuffix(pat, "/") {
+			return true
+		}
+	}
+	return false
 }
 
 func relativePath(base, target string) string {

@@ -20,10 +20,12 @@ const (
 	modelTagHeader = "x-forgen-model"
 )
 
-// complexityKeywords sugieren un modelo heavy para tareas complejas.
+// complexityKeywords sugieren un modelo heavy para tareas complejas (bilíngüe).
 var complexityKeywords = []string{
-	"concurren", "algoritmo", "race", "deadlock", "refactor", "arquitect",
-	"escalab", "optimiz", "perf", "debug", "seguridad", "migra",
+	"concurren", "algoritmo", "race", "deadlock", "refactor", "arquitect", "architecture",
+	"escalab", "optimiz", "perf", "debug", "seguridad", "security", "migra", "migration",
+	"concurrency", "parallel", "async", "database", "transaction", "auth", "jwt",
+	"test coverage", "benchmark", "scale", "distributed", "microservice",
 }
 
 // Orchestrator clasifica tareas por fase y elige el modelo por rol.
@@ -143,25 +145,25 @@ func (o *Orchestrator) defaultModel() domain.Model {
 	return domain.Model{Provider: o.config.Default.Provider, ID: o.config.Default.Model}
 }
 
-// pickFromPool elige el modelo más liviano para tareas simples y escala a
-// heavy para tareas complejas o como retry.
+// pickFromPool elige por scoring agnóstico: 0→light, 1→standard, 2+→heavy.
 func (o *Orchestrator) pickFromPool(pool []domain.Model, prompt string) domain.Model {
 	if len(pool) == 1 {
 		return pool[0]
 	}
-	complex := isComplex(prompt)
-
-	// Ordenar por tier (light < standard < heavy).
+	score := complexityScore(prompt)
 	sorted := make([]domain.Model, len(pool))
 	copy(sorted, pool)
 	sort.SliceStable(sorted, func(i, j int) bool {
 		return tierWeight(o.tierOf(sorted[i])) < tierWeight(o.tierOf(sorted[j]))
 	})
-
-	if complex {
-		return sorted[len(sorted)-1] // el más pesado
+	if score >= 2 {
+		return sorted[len(sorted)-1]
 	}
-	return sorted[0] // el más liviano
+	if score == 1 && len(sorted) >= 2 {
+		// middle tier si existe
+		return sorted[len(sorted)/2]
+	}
+	return sorted[0]
 }
 
 func (o *Orchestrator) tierOf(model domain.Model) domain.Tier {
@@ -184,14 +186,28 @@ func tierWeight(tier domain.Tier) int {
 	}
 }
 
-func isComplex(prompt string) bool {
+func isComplex(prompt string) bool { return complexityScore(prompt) >= 2 }
+
+func complexityScore(prompt string) int {
 	lower := strings.ToLower(prompt)
-	for _, keyword := range complexityKeywords {
-		if strings.Contains(lower, keyword) {
-			return true
+	score := 0
+	for _, kw := range complexityKeywords {
+		if strings.Contains(lower, kw) {
+			score++
 		}
 	}
-	return false
+	// Heurísticas adicionales agnósticas
+	if len(prompt) > 300 {
+		score++
+	}
+	if strings.Contains(lower, "3+") || strings.Contains(lower, "varios archivos") || strings.Contains(lower, "multiple files") {
+		score++
+	}
+	// Mención de paths múltiples
+	if strings.Count(lower, "/") >= 3 {
+		score++
+	}
+	return score
 }
 
 // roleForPhase mapea una fase a su rol dominante.

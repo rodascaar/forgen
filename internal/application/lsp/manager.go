@@ -68,6 +68,22 @@ func (m *Manager) Close() {
 	}
 }
 
+// DiagnosticsFor devuelve diagnósticos para un archivo (PostToolUse hook).
+func (m *Manager) DiagnosticsFor(ctx context.Context, path string) string {
+	if m == nil || m.client == nil {
+		return ""
+	}
+	diags, err := m.client.Diagnostics(ctx, path)
+	if err != nil || len(diags) == 0 {
+		return ""
+	}
+	var out string
+	for _, d := range diags {
+		out += fmt.Sprintf("%s:%d:%d %s: %s\n", d.File, d.Line, d.Column, severityLabel(d.Severity), d.Message)
+	}
+	return out
+}
+
 // Syncer devuelve el sincronizador de documentos para el wrapper de FileSystem.
 func (m *Manager) Syncer() lspadapter.DocumentSyncer {
 	if m == nil {

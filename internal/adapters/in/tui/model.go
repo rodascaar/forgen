@@ -738,6 +738,34 @@ func (m Model) handleSlash(command string) (tea.Model, tea.Cmd) {
 		m.assistantBuffer = ""
 		m.cancelRun = cancel4
 		return m, m.startRun(ctx4, "Corrige automáticamente los errores de lint/test y valida con go vet")
+	case "/compact":
+		if m.sessionID == "" {
+			m.append("notice", "Sin sesión activa — nada que compactar.")
+			return m, nil
+		}
+		focus := ""
+		if len(fields) > 1 {
+			focus = strings.Join(fields[1:], " ")
+		}
+		m.append("notice", "Compactando sesión... (prune + LLM summary)")
+		ctx2, cancel2 := context.WithCancel(context.Background())
+		m.running = true
+		m.assistantBuffer = ""
+		m.cancelRun = cancel2
+		return m, m.startCompact(ctx2, focus)
+	case "/context":
+		if m.sessionID == "" {
+			m.transcript = m.transcript[:0]
+			m.append("notice", "Sin sesión activa.")
+			return m, nil
+		}
+		sess, err := m.app.SessionService.Resume(context.Background(), m.sessionID)
+		if err != nil {
+			m.append("error", fmt.Sprintf("context: %v", err))
+			return m, nil
+		}
+		m.append("notice", compactContextLine(sess, m.app))
+		return m, nil
 	case "/undo":
 		if m.sessionID == "" {
 			m.append("notice", "Sin sesión activa todavía.")
@@ -998,6 +1026,59 @@ func (m *Model) toggleAgent() {
 		}
 	}
 	m.agentName = "build"
+}
+
+func (m Model) startCompact(ctx context.Context, focus string) tea.Cmd {
+	return func() tea.Msg {
+		sess, err := m.app.SessionService.Resume(ctx, m.sessionID)
+		if err != nil {
+			return runDoneMsg{err: err}
+		}
+		workspace := m.workspace
+		if sess.Workspace != "" {
+			workspace = sess.Workspace
+		}
+		appConfig, _ := m.app.LoadConfig(ctx)
+		model, provider, _, err := m.app.ResolveRunModel(ctx, sess.Summary(), "", "")
+		if err != nil {
+			model = sess.Model
+			if pc, ok := appConfig.FindProvider(model.Provider); ok {
+				_ = pc
+				provider, _ = m.app.ResolveProvider(appConfig, model)
+			}
+		}
+		if provider == nil {
+			return runDoneMsg{err: fmt.Errorf("no hay provider para compactar")}
+		}
+		agentDef, _ := m.app.SelectedAgent(appConfig, sess.Agent)
+		messenger := newTUIMessenger(m.program)
+		runner, err := m.app.NewRunner(ctx, apppkg.RunnerDeps{
+			Provider: provider, Model: model, Agent: agentDef, Messenger: messenger, Responder: messenger, Workspace: workspace, SessionID: sess.ID,
+		})
+		if err != nil {
+			return runDoneMsg{err: err}
+		}
+		if err := runner.CompactNow(ctx, &sess, focus); err != nil {
+			return runDoneMsg{err: err}
+		}
+		m.sessionID = sess.ID
+		return runDoneMsg{err: nil, sessionID: sess.ID}
+	}
+}
+
+// compactContextLine formatea /context para TUI.
+func compactContextLine(sess domain.Session, app *apppkg.App) string {
+	appConfig, _ := app.LoadConfig(context.Background())
+	tokens := 0
+	for _, msg := range sess.Messages {
+		tokens += len(msg.Text())/4 + 4
+	}
+	limit := 128000
+	if md, ok := appConfig.ModelMetadata[sess.Model.Key()]; ok && md.ContextLimit > 0 {
+		limit = md.ContextLimit
+	}
+	pct := float64(tokens) / float64(limit) * 100
+	return fmt.Sprintf("Context: %d msgs · %d/%d tokens (%.1f%%) · compactions %d boundary %d summary %d chars", len(sess.Messages), tokens, limit, pct, sess.CompactionCount, sess.CompactBoundary, len(sess.CompactionSummary))
 }
 
 // startRun arma el comando del agente en segundo plano + el ticker del spinner.

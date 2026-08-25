@@ -58,11 +58,48 @@ func decodeArgs[ArgType any](raw map[string]any) (ArgType, error) {
 }
 
 // truncate limita la salida para no saturar el contexto del modelo.
+// Si el texto parece output de tests con muchos "PASS"/"ok", preserva solo failures para ahorrar tokens (9B).
 func truncate(text string, maxChars int) string {
 	if len(text) <= maxChars {
 		return text
 	}
-	return text[:maxChars] + fmt.Sprintf("\n... [salida truncada: %d caracteres]", len(text)-maxChars)
+	// Heurística: si es output de tests/lint con muchos PASS, extrae solo failures/stacktrace.
+	if isTestOutput(text) {
+		filtered := filterTestFailures(text, maxChars)
+		if len(filtered) < len(text) && len(filtered) <= maxChars+2000 {
+			return filtered + fmt.Sprintf("\n... [filtrado: %d→%d chars, solo failures]", len(text), len(filtered))
+		}
+	}
+	return text[:maxChars] + fmt.Sprintf("\n... [salida truncada: %d caracteres — usa read con offset/limit o grep para paginar]", len(text)-maxChars)
+}
+
+func isTestOutput(text string) bool {
+	lower := strings.ToLower(text)
+	return strings.Contains(lower, "pass") || strings.Contains(lower, "fail") || strings.Contains(lower, "---") || strings.Contains(lower, "ok ")
+}
+
+func filterTestFailures(text string, maxChars int) string {
+	lines := strings.Split(text, "\n")
+	var kept []string
+	for _, l := range lines {
+		low := strings.ToLower(l)
+		if strings.Contains(low, "fail") || strings.Contains(low, "error") || strings.Contains(low, "panic") || strings.Contains(low, "---") {
+			kept = append(kept, l)
+		}
+	}
+	if len(kept) == 0 {
+		// fallback: head + tail
+		if len(lines) > 40 {
+			kept = append(lines[:20], lines[len(lines)-20:]...)
+		} else {
+			kept = lines
+		}
+	}
+	out := strings.Join(kept, "\n")
+	if len(out) > maxChars {
+		return out[:maxChars]
+	}
+	return out
 }
 
 func summarizeResult(output string, maxChars int) string {

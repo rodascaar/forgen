@@ -19,6 +19,11 @@ type Message struct {
 	ToolCallID string
 	ToolName   string
 	CreatedAt  time.Time
+	// CompactedAt marca cuando el contenido tool fue pruneado (no-destructivo).
+	// Nil = no compactado. Timestamp permite computed view reversible.
+	CompactedAt *time.Time `json:"compacted_at,omitempty"`
+	// IsSummary marca el mensaje sintético de resumen post-compaction.
+	IsSummary bool `json:"is_summary,omitempty"`
 }
 
 // NewTextMessage crea un mensaje de texto puro.

@@ -27,6 +27,13 @@ var dangerousPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\bchmod\s+777\b`),
 }
 
+// preToolBlockPatterns bloquea determinísticamente sin LLM (PreToolUse hook).
+var preToolBlockPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)(^|/)\.env(\.|$)`),
+	regexp.MustCompile(`(?i)\.(pem|key|crt|p12|pfx)$`),
+	regexp.MustCompile(`(?i)(^|/)secrets?/`),
+}
+
 // Service implementa ports.PermissionDecider.
 type Service struct {
 	mode      domain.PermissionMode
@@ -45,6 +52,10 @@ func NewService(mode domain.PermissionMode, workspace string, configRules, persi
 
 // Decide implementa ports.PermissionDecider.
 func (s *Service) Decide(_ context.Context, sessionID string, call domain.ToolCall) (domain.Decision, error) {
+	// 0. PreToolUse determinístico: bloquea .env / secrets sin prompt (no en CLAUDE.md).
+	if blocked, reason := s.isPreToolBlocked(call); blocked {
+		return domain.Decision{Allowed: false, Level: domain.PermissionNever, Reason: reason}, nil
+	}
 	// 1. Reglas explícitas primero (mayor precedencia).
 	if rule, ok := s.matchRule(call); ok {
 		return decisionFromLevel(rule.Level, "regla de permiso aplicada"), nil
@@ -135,6 +146,37 @@ func (s *Service) isDangerous(call domain.ToolCall) bool {
 		}
 	}
 	return false
+}
+
+func (s *Service) isPreToolBlocked(call domain.ToolCall) (bool, string) {
+	// Solo para herramientas de escritura/bash sobre archivos sensibles.
+	if call.Name != "write" && call.Name != "edit" && call.Name != "apply_patch" && call.Name != "bash" {
+		return false, ""
+	}
+	// Extraer path/command para chequear.
+	var target string
+	if p, ok := call.Arguments["path"].(string); ok {
+		target = p
+	} else if p, ok := call.Arguments["patch"].(string); ok {
+		target = p
+	} else if c, ok := call.Arguments["command"].(string); ok {
+		target = c
+	}
+	if target == "" {
+		return false, ""
+	}
+	for _, pat := range preToolBlockPatterns {
+		if pat.MatchString(target) {
+			return true, "PreToolUse block: edición de archivo sensible (.env/secret) denegada determinísticamente"
+		}
+	}
+	// Bloquear edit/write que contenga secrets en el contenido (heurística simple)
+	if content, ok := call.Arguments["content"].(string); ok {
+		if strings.Contains(strings.ToLower(content), "api_key") && strings.Contains(content, "sk-") {
+			// no bloquear, solo warning via on_request (no hard block)
+		}
+	}
+	return false, ""
 }
 
 // RuleFor builds a rule to persist for a tool call.

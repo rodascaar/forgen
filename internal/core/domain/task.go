@@ -36,6 +36,7 @@ type SubAgentConfig struct {
 	Prompt      string   `json:"prompt"`
 	MaxTurns    int      `json:"max_turns"`
 	Timeout     int      `json:"timeout"`
+	Isolation   string   `json:"isolation,omitempty"` // "" | "worktree" (future: git worktree per subagente)
 }
 
 type Task struct {

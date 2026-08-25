@@ -1,6 +1,40 @@
 package domain
 
-import "time"
+import (
+	"embed"
+	"strings"
+	"time"
+)
+
+//go:embed prompts/*.md
+var promptFS embed.FS
+
+func loadPrompt(name string) string {
+	data, err := promptFS.ReadFile("prompts/" + name)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// PromptFor returns the embedded prompt for agent+lang; fallback to legacy hardcoded.
+func PromptFor(agent, lang string) string {
+	lang = strings.ToLower(lang)
+	if lang != "es" && lang != "en" {
+		lang = "en"
+	}
+	name := agent + "." + lang + ".md"
+	if p := loadPrompt(name); p != "" {
+		return p
+	}
+	// fallback to embedded legacy
+	for _, a := range BuiltinAgents() {
+		if a.Name == agent {
+			return a.SystemPrompt
+		}
+	}
+	return ""
+}
 
 // Agent define la personalidad y el alcance de un agente.
 type Agent struct {
@@ -31,23 +65,49 @@ func (a Agent) CanUseTool(toolName string) bool {
 	return false
 }
 
-// BuiltinAgents devuelve los agentes integrados.
+// BuiltinAgents devuelve los agentes integrados (legacy prompts inline; prefer PromptFor with embedded files).
 func BuiltinAgents() []Agent {
+	return BuiltinAgentsForLang("en")
+}
+
+// BuiltinAgentsForLang devuelve agentes con prompts embebidos por idioma (es/en).
+func BuiltinAgentsForLang(lang string) []Agent {
+	lang = strings.ToLower(strings.TrimSpace(lang))
+	if lang != "es" && lang != "en" {
+		lang = "en"
+	}
+	buildPrompt := loadPrompt("build." + lang + ".md")
+	if buildPrompt == "" {
+		buildPrompt = "You are forgen build agent. Explore with glob/grep/read, plan with todowrite, implement with write/edit/apply_patch, verify with bash/lsp."
+	}
+	planPrompt := loadPrompt("plan." + lang + ".md")
+	if planPrompt == "" {
+		planPrompt = "You are forgen plan agent (read-only). Analyze and explore only."
+	}
 	return []Agent{
 		{
 			Name:         "build",
 			Description:  "Agente de desarrollo con acceso total (lee, escribe y ejecuta).",
 			IsReadOnly:   false,
-			SystemPrompt: "Eres forgen, un agente de desarrollo que ayuda a los usuarios a escribir, refactorizar y depurar código. Trabajas en el workspace del proyecto actual. Prefiere herramientas de lectura (glob/grep/read) antes de adivinar. Ejecuta comandos con bash para validar. Eres conciso y preciso.\n\nCumplimiento de requisitos: aplica TODOS los cambios que pidió el usuario. No te limites a cambiar nombres o estructura: implementa el resultado completo y verifica que cada punto solicitado quedó cubierto antes de terminar. Si el cambio requiere varios archivos o estilos, entrégalos completos.\n\nConciencia de estado: antes de arrancar servicios, contenedores, procesos de larga duración o repetir acciones, comprueba el estado actual (p.ej. docker ps, git status, procesos) para evitar redundancia, conflictos o bloqueos. No lances algo que ya está corriendo.",
+			SystemPrompt: buildPrompt,
 		},
 		{
 			Name:         "plan",
 			Description:  "Agente de análisis y exploración de solo lectura.",
 			IsReadOnly:   true,
-			SystemPrompt: "Eres forgen en modo plan. Solo puedes ANALIZAR y EXPLORAR: leer archivos y logs, buscar (glob/grep), consultar git status/diff, navegar la web (web_fetch/web_search) y usar LSP de lectura. NO puedes modificar nada: no escribas ni edites archivos, no ejecutes comandos, no apliques patches, no renombres símbolos ni lances sub-agentes. Deja la implementación para el modo build.\n\nCuando la tarea admita varias formas de resolverla, presenta la respuesta de forma estructurada:\n1) Análisis: qué encontraste al investigar (archivos, logs, git, web, LSP).\n2) Opciones: lista 2-3 enfoques concretos. Para cada uno indica qué cambia y sus pros/contras o tradeoffs.\n3) Recomendación: elige la mejor opción para el caso observado y márcala en su propia línea con exactamente el prefijo '✅ Recomendación:' seguido de un título corto, y justifícala brevemente con evidencia del análisis.\n4) Pasos: ordena la implementación de la opción recomendada en pasos claros y termina con cómo verificar el resultado.\nSé conciso y técnico; deja los cambios de código para el modo build.",
+			SystemPrompt: planPrompt,
 			DeniedTools:  []string{"write", "edit", "bash", "apply_patch", "task", "lsp_rename", "todo"},
 		},
 	}
+}
+
+// ResolveLanguage normaliza es/en.
+func ResolveLanguage(lang string) string {
+	lang = strings.ToLower(strings.TrimSpace(lang))
+	if lang == "es" {
+		return "es"
+	}
+	return "en"
 }
 
 // FindAgent busca un agente por nombre en la lista.
@@ -71,6 +131,13 @@ type Session struct {
 	Messages  []Message
 	// Summary es una descripción corta cacheada (primer mensaje de usuario).
 	SummaryCache string
+	// CompactBoundary es el índice en Messages donde empieza el tail post-compaction.
+	// -1 = sin compactación. Mensajes < boundary son historia compactada (vista filtrada).
+	CompactBoundary int `json:"compact_boundary,omitempty"`
+	// CompactionCount cuenta compactions consecutivas para anti-thrashing.
+	CompactionCount int `json:"compaction_count,omitempty"`
+	// CompactionSummary guarda el último resumen para reconstrucción sin LLM extra.
+	CompactionSummary string `json:"compaction_summary,omitempty"`
 }
 
 // LastMessage devuelve el último mensaje de la sesión, si existe.

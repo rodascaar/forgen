@@ -49,11 +49,25 @@ mcp_servers:
   filesystem:
     command: npx
     args: ["-y", "@modelcontextprotocol/server-filesystem", "/ruta/a/un/dir"]
+  # RepoMap: indexing ligero sin embeddings (recomendado para 9B — ahorra exploración).
+  # Requiere: npm i -g mcp-server-tree-sitter  o  npx -y mcp-server-tree-sitter
+  # repo_map:
+  #   command: npx
+  #   args: ["-y", "mcp-server-tree-sitter", "--workspace", "."]
 
 # Búsqueda web (opcional).
 search:
   provider: brave
   api_key_env: BRAVE_API_KEY
+
+# Compaction (opcional): threshold 0.85 (default), disabled false.
+# compaction:
+#   threshold: 0.85
+#   disabled: false
+# language: es  # es | en, default en (también FORGEN_LANG)
+# model_metadata contexto por modelo (para isOverflow):
+#   openai/gpt-5: { tier: heavy, context_limit: 128000, max_output: 4096 }
+#   local/llama3: { tier: light, context_limit: 8192, max_output: 2048 }
 
 # Paleta de la TUI (opcional).
 theme:

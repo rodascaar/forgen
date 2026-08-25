@@ -57,8 +57,8 @@ func LoadProjectContext(ctx context.Context, workspace string, fs ports.FileSyst
 }
 
 func readContextFile(ctx context.Context, dir string, fs ports.FileSystem) (ContextBlock, bool, error) {
-	// AGENTS.md tiene prioridad sobre CLAUDE.md en el mismo directorio.
-	for _, name := range []string{contextFileName, alternativeContextFileName} {
+	// Orden bilingüe: AGENTS.md > AGENTS.es.md > AGENTS.en.md > CLAUDE.md
+	for _, name := range []string{contextFileName, "AGENTS.es.md", "AGENTS.en.md", alternativeContextFileName} {
 		path := filepath.Join(dir, name)
 		exists, err := fs.Exists(ctx, path)
 		if err != nil {

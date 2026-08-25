@@ -4,6 +4,13 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-1.1.0/) y
 el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 
+## [0.1.16] - 2026-08-25
+
+### Añadido
+
+- **Harness agnóstico 9B→gigante (Fase 7.1-7.6)**: compaction estándar 2-step Extract (prune no-destructivo 40k/20k + LLM 5 headings, `internal/application/session/compaction.go`), prompts bilingües `build/plan` 2-4k `es/en` (`internal/core/domain/prompts/*.md`, `FORGEN_LANG`), tuning por familia (`apply_patch` GPT vs `edit` 9B), `AGENTS.md` bilingüe walk-up, tool schemas ricos con `WHEN_TO_USE` + ejemplos, `read_many_files` batch (9B), `update_plan` FSM 1-7 pasos con artifact `.forgen/plans/plan.md`, parallel tool calls 5 + doom-loop guard, `.gitignore` respect, RepoMap MCP docs, subagentes fresh window + tier routing (light/standard/heavy scoring), `run_in_background`, `PreToolUse` block `.env/secrets`, `PostToolUse` LSP diagnostics auto, `LSP.DiagnosticsFor`, memoria `.forgen/memory.md` + skills budget 25k/5k LIFO + token budget warn, CLI `forgen compact/context` y TUI `/compact /context` (`internal/app/app.go`, `internal/application/agent/runner.go`, `internal/application/permission/service.go`, `internal/application/lsp/manager.go`, `internal/application/memory/service.go`).
+- **Compaction threshold configurable**: `compaction.threshold/disabled` en `config.yaml`, `FORGEN_DISABLE_AUTOCOMPACT`, `ModelMetadata.context_limit/max_output` para `isOverflow` por modelo (`internal/core/domain/config.go`, `orchestration.go`).
+
 ## [0.1.15] - 2026-08-24
 
 ### Añadido

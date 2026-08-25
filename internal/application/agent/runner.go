@@ -6,10 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/rodascaar/forgen/internal/application/memory"
 	"github.com/rodascaar/forgen/internal/application/session"
 	"github.com/rodascaar/forgen/internal/core/domain"
 	"github.com/rodascaar/forgen/internal/core/ports"
@@ -35,7 +38,16 @@ type Runner struct {
 	usage           ports.UsageRecorder
 	maxIterations   int
 	reasoningEffort string
+	compaction      CompactionConfig
+	diagnostics     func(context.Context, string) string
 	logger          *slog.Logger
+}
+
+// CompactionConfig controla auto-compaction en el Runner.
+type CompactionConfig struct {
+	Threshold     float64
+	Disabled      bool
+	ModelMetadata map[string]domain.ModelMetadata
 }
 
 // RunInput agrupa los datos de entrada de un turno.
@@ -67,6 +79,8 @@ type Options struct {
 	Usage           ports.UsageRecorder
 	MaxIterations   int
 	ReasoningEffort string
+	Compaction      CompactionConfig
+	Diagnostics     func(context.Context, string) string
 	Logger          *slog.Logger
 }
 
@@ -111,6 +125,8 @@ func NewRunner(options Options) (*Runner, error) {
 		usage:           options.Usage,
 		maxIterations:   maxIterations,
 		reasoningEffort: options.ReasoningEffort,
+		compaction:      options.Compaction,
+		diagnostics:     options.Diagnostics,
 		logger:          options.Logger,
 	}, nil
 }
@@ -133,6 +149,11 @@ func (r *Runner) Run(ctx context.Context, input RunInput) (RunResult, error) {
 
 	// 3. Herramientas visibles según el agente.
 	tools := r.visibleTools(input.Agent)
+
+	// 3.1 Auto-compaction pre-turn si ya estamos en overflow (evita prompt_too_long).
+	if err := r.maybeCompact(ctx, &input.Session, ""); err != nil {
+		r.logger.Warn("auto-compact pre-turn", "err", err)
+	}
 
 	totalToolCalls := 0
 	for iteration := 0; iteration < r.maxIterations; iteration++ {
@@ -176,6 +197,10 @@ func (r *Runner) Run(ctx context.Context, input RunInput) (RunResult, error) {
 		if err := r.sessions.Save(ctx, input.Session); err != nil {
 			return RunResult{}, err
 		}
+		// Auto-compaction tras tool results si superamos umbral (no bloquea si falla).
+		if err := r.maybeCompact(ctx, &input.Session, ""); err != nil {
+			r.logger.Warn("auto-compact post-tools", "err", err)
+		}
 	}
 
 	// Guard: se agotaron las iteraciones.
@@ -207,6 +232,15 @@ func (r *Runner) callLLM(ctx context.Context, sessionID string, model domain.Mod
 	messages []domain.Message, tools []domain.Tool, phase domain.AgentPhase) (llmResponse, error) {
 	var response llmResponse
 	var mutex sync.Mutex
+	// Token budget & cost guard (7.6.3) — estima y warn si >80%
+	budgetTokens := 0
+	for _, m := range messages {
+		budgetTokens += len(m.Text())/4 + 4
+	}
+	if budgetTokens > 90000 {
+		r.logger.Warn("token.budget_high", "session", sessionID, "tokens", budgetTokens, "hint", "consider /compact or fresh session")
+		r.messenger.Notice(sessionID, fmt.Sprintf("⚠ Tokens altos: %d — considera /compact o sesión nueva para ahorrar coste", budgetTokens))
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, llmTimeout)
 	defer cancel()
@@ -272,20 +306,140 @@ func (r *Runner) recordUsage(ctx context.Context, sessionID string, model domain
 	}
 }
 
-// executeTools decide permisos, ejecuta y construye los mensajes de resultado.
+// executeTools decide permisos y ejecuta con paralelismo limitado (5 concurrent, cache-friendly).
+// Doom-loop guard: si 3× mismo tool+args, injecta warning.
+// Mantiene orden de toolMessages igual a calls para correlación con LLM.
 func (r *Runner) executeTools(ctx context.Context, sessionID, workspace string, agent domain.Agent,
 	calls []domain.ToolCall) ([]domain.Message, error) {
-	toolMessages := make([]domain.Message, 0, len(calls))
-
-	for _, call := range calls {
-		r.messenger.ToolStarted(sessionID, call)
-		result := r.executeWithPermission(ctx, sessionID, agent, call)
-		r.messenger.ToolFinished(sessionID, call, result)
-		r.logger.Info("tool.finished", "session", sessionID, "tool", call.Name,
-			"ok", result.OK, "error", errorString(result.Error))
-		toolMessages = append(toolMessages, domain.NewToolResultMessage(call.ID, call.Name, result))
+	if doom := r.detectDoomLoop(calls); doom != "" {
+		r.messenger.Notice(sessionID, doom)
+		r.logger.Warn("tool.doom_loop", "session", sessionID, "hint", doom)
 	}
+	// Fase permisos secuencial (Confirm interactivo no paralelizable), luego ejecución paralela donde sea seguro.
+	type permResult struct {
+		idx    int
+		call   domain.ToolCall
+		result *domain.ToolResult // non-nil si permiso denegado o readOnly block (no ejecutar)
+	}
+	permResults := make([]permResult, len(calls))
+	for i, call := range calls {
+		// Check readOnly block primero (sync, sin I/O)
+		if agent.IsReadOnly && !readOnlyToolAllowlist[call.Name] {
+			denied := domain.ToolResult{
+				ToolCallID: call.ID,
+				OK:         false,
+				Output:     deniedResultMessage,
+				Error:      fmt.Errorf("%s: herramienta %q no permitida en modo plan", deniedResultMessage, call.Name),
+			}
+			permResults[i] = permResult{idx: i, call: call, result: &denied}
+			continue
+		}
+		decision, err := r.decider.Decide(ctx, sessionID, call)
+		if err != nil {
+			denied := domain.ToolResult{ToolCallID: call.ID, OK: false, Error: fmt.Errorf("decidir permiso: %w", err)}
+			permResults[i] = permResult{idx: i, call: call, result: &denied}
+			continue
+		}
+		if !decision.Allowed && decision.Level == domain.PermissionOnRequest {
+			allowed, confirmErr := r.responder.Confirm(ctx, sessionID, call)
+			if confirmErr != nil {
+				denied := domain.ToolResult{ToolCallID: call.ID, OK: false, Error: confirmErr}
+				permResults[i] = permResult{idx: i, call: call, result: &denied}
+				continue
+			}
+			if allowed {
+				decision = domain.Decision{Allowed: true, Level: domain.PermissionOnRequest, Reason: "confirmado por usuario"}
+			}
+		}
+		if !decision.Allowed {
+			r.messenger.Notice(sessionID, fmt.Sprintf("Permiso denegado para %s: %s", call.Name, decision.Reason))
+			denied := domain.ToolResult{
+				ToolCallID: call.ID,
+				OK:         false,
+				Output:     deniedResultMessage,
+				Error:      fmt.Errorf("%s: %s", deniedResultMessage, decision.Reason),
+			}
+			permResults[i] = permResult{idx: i, call: call, result: &denied}
+			continue
+		}
+		permResults[i] = permResult{idx: i, call: call, result: nil}
+	}
+
+	// Ejecutar en paralelo con límite 5
+	toolMessages := make([]domain.Message, len(calls))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 5)
+	for i, pr := range permResults {
+		if pr.result != nil {
+			// Permiso denegado — no ejecuta, síncrono
+			r.messenger.ToolStarted(sessionID, pr.call)
+			r.messenger.ToolFinished(sessionID, pr.call, *pr.result)
+			r.logger.Info("tool.finished", "session", sessionID, "tool", pr.call.Name, "ok", pr.result.OK, "error", errorString(pr.result.Error))
+			toolMessages[i] = domain.NewToolResultMessage(pr.call.ID, pr.call.Name, *pr.result)
+			continue
+		}
+		wg.Add(1)
+		go func(idx int, call domain.ToolCall) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			r.messenger.ToolStarted(sessionID, call)
+			result := r.tools.Execute(ctx, call)
+			result.ToolCallID = call.ID
+			// PostToolUse diagnostics (7.5.2) — feed LSP diagnostics after write/edit/patch
+			if (call.Name == "write" || call.Name == "edit" || call.Name == "apply_patch") && r.diagnostics != nil {
+				if p, ok := call.Arguments["path"].(string); ok && p != "" {
+					if diag := r.diagnostics(ctx, p); diag != "" && diag != "(sin diagnósticos)" {
+						result.Output += "\n[LSP diagnostics for " + p + "]\n" + diag
+						r.messenger.Notice(sessionID, "LSP diagnostics: "+diag)
+					}
+				} else if patch, ok := call.Arguments["patch"].(string); ok && r.diagnostics != nil {
+					// try to extract file from patch header
+					if extracted := extractPatchPath(patch); extracted != "" {
+						if diag := r.diagnostics(ctx, extracted); diag != "" && diag != "(sin diagnósticos)" {
+							result.Output += "\n[LSP diagnostics for " + extracted + "]\n" + diag
+						}
+					}
+				}
+			}
+			r.messenger.ToolFinished(sessionID, call, result)
+			r.logger.Info("tool.finished", "session", sessionID, "tool", call.Name, "ok", result.OK, "error", errorString(result.Error))
+			toolMessages[idx] = domain.NewToolResultMessage(call.ID, call.Name, result)
+		}(i, pr.call)
+	}
+	wg.Wait()
 	return toolMessages, nil
+}
+
+// doom-loop: 3× mismo tool+args exactos
+var doomHistory = struct {
+	sync.Mutex
+	recent []string
+}{}
+
+func (r *Runner) detectDoomLoop(calls []domain.ToolCall) string {
+	key := func(c domain.ToolCall) string {
+		return c.Name + ":" + fmt.Sprintf("%v", c.Arguments)
+	}
+	doomHistory.Lock()
+	defer doomHistory.Unlock()
+	for _, c := range calls {
+		k := key(c)
+		doomHistory.recent = append(doomHistory.recent, k)
+		if len(doomHistory.recent) > 10 {
+			doomHistory.recent = doomHistory.recent[len(doomHistory.recent)-10:]
+		}
+		count := 0
+		for _, r := range doomHistory.recent {
+			if r == k {
+				count++
+			}
+		}
+		if count >= 3 {
+			return fmt.Sprintf("⚠ Doom-loop detectado: '%s' repetido %dx — prueba alternativa (glob vs grep, read_many_files, o cambia args).", c.Name, count)
+		}
+	}
+	return ""
 }
 
 func (r *Runner) executeWithPermission(ctx context.Context, sessionID string, agent domain.Agent, call domain.ToolCall) domain.ToolResult {
@@ -335,6 +489,7 @@ func (r *Runner) executeWithPermission(ctx context.Context, sessionID string, ag
 // (task, write, edit, bash, apply_patch, lsp_rename, todo, mcp_*) queda fuera.
 var readOnlyToolAllowlist = map[string]bool{
 	"read":                  true,
+	"read_many_files":       true,
 	"glob":                  true,
 	"grep":                  true,
 	"git_status":            true,
@@ -342,6 +497,8 @@ var readOnlyToolAllowlist = map[string]bool{
 	"read_skill":            true,
 	"web_fetch":             true,
 	"web_search":            true,
+	"todowrite":             true,
+	"update_plan":           true,
 	"lsp_diagnostics":       true,
 	"lsp_hover":             true,
 	"lsp_implementation":    true,
@@ -369,12 +526,350 @@ func (r *Runner) visibleTools(agent domain.Agent) []domain.Tool {
 	return r.tools.LookupTools(agent.AllowedTools)
 }
 
-// buildMessages construye la lista de mensajes para el proveedor.
+// buildMessages construye la lista de mensajes para el proveedor (vista compactada).
 func (r *Runner) buildMessages(systemPrompt string, session domain.Session) []domain.Message {
-	messages := make([]domain.Message, 0, len(session.Messages)+1)
+	messages := make([]domain.Message, 0, len(session.Messages)+2)
 	messages = append(messages, domain.NewTextMessage(domain.RoleSystem, systemPrompt))
-	messages = append(messages, session.Messages...)
+	visible := r.compactedVisible(session)
+	messages = append(messages, visible...)
 	return messages
+}
+
+func (r *Runner) compactedVisible(s domain.Session) []domain.Message {
+	// Si hay summary+boundary, colapsar.
+	if s.CompactBoundary > 0 && s.CompactionSummary != "" {
+		boundary := s.CompactBoundary
+		if boundary < 0 {
+			boundary = 0
+		}
+		if boundary > len(s.Messages) {
+			boundary = len(s.Messages)
+		}
+		var out []domain.Message
+		summary := "Another language model started to solve this task and produced a summary. Use it to build on work already done and avoid duplicating effort.\n\n## Session Summary (compacted)\n" + strings.TrimSpace(s.CompactionSummary)
+		out = append(out, domain.Message{
+			Role:    domain.RoleSystem,
+			Content: []domain.ContentPart{{Type: "text", Text: summary}},
+		})
+		for i := boundary; i < len(s.Messages); i++ {
+			out = append(out, r.projectMessage(s.Messages[i]))
+		}
+		return out
+	}
+	var out []domain.Message
+	for _, m := range s.Messages {
+		out = append(out, r.projectMessage(m))
+	}
+	return out
+}
+
+func (r *Runner) projectMessage(m domain.Message) domain.Message {
+	if m.CompactedAt != nil && m.Role == domain.RoleTool {
+		return domain.Message{
+			Role:       m.Role,
+			ToolCallID: m.ToolCallID,
+			ToolName:   m.ToolName,
+			Content:    []domain.ContentPart{{Type: "text", Text: "[tool result cleared — use read/grep to re-fetch if needed]"}},
+			CreatedAt:  m.CreatedAt,
+		}
+	}
+	return m
+}
+
+// maybeCompact aplica 2-step compaction: prune (cero LLM) → LLM summary si aún overflow.
+// focus permite /compact con instrucciones (Claude Compact Instructions).
+func (r *Runner) maybeCompact(ctx context.Context, sess *domain.Session, focus string) error {
+	if r.compaction.Disabled {
+		return nil
+	}
+	threshold := r.compaction.Threshold
+	if threshold == 0 {
+		threshold = 0.85
+	}
+	// Env override FORGEN_DISABLE_AUTOCOMPACT
+	if v := strings.TrimSpace(strings.ToLower(strings.TrimSpace(envOr("", "FORGEN_DISABLE_AUTOCOMPACT")))); v == "1" || v == "true" {
+		return nil
+	}
+	if sess.CompactionCount >= 3 {
+		// Anti-thrashing: 3 compactions seguidas sin bajar suficiente → pausar.
+		// Solo permitir manual con focus.
+		if focus == "" {
+			r.logger.Warn("compaction thrashing guard", "session", sess.ID, "count", sess.CompactionCount)
+			return nil
+		}
+	}
+	needsOverflow := isOverflowLocal(*sess, sess.Model, r.compaction.ModelMetadata, threshold)
+	if !needsOverflow && focus == "" {
+		return nil
+	}
+	// Step 1: prune no-destructivo (siempre, barato).
+	pruneable, _ := needsPruneLocal(*sess)
+	if pruneable {
+		*sess, _ = pruneLocal(*sess)
+		if err := r.sessions.Save(ctx, *sess); err != nil {
+			return err
+		}
+		r.messenger.Notice(sess.ID, "Pruned old tool results to free context (no LLM cost)")
+		// Re-evaluar overflow tras prune.
+		if !isOverflowLocal(*sess, sess.Model, r.compaction.ModelMetadata, threshold) && focus == "" {
+			return nil
+		}
+	}
+	// Step 2: LLM summary (5 headings) — requiere provider.
+	if r.provider == nil {
+		return nil
+	}
+	// Si thrashing, solo prune ya hecho, no LLM.
+	if sess.CompactionCount >= 3 && focus == "" {
+		return nil
+	}
+	summary, err := summarizeLocal(ctx, r.provider, sess.Model, *sess, focus)
+	if err != nil {
+		return err
+	}
+	*sess = applyCompactionLocal(*sess, summary)
+	if err := r.sessions.Save(ctx, *sess); err != nil {
+		return err
+	}
+	// 7.6.1 memoria auto
+	if sess.Workspace != "" {
+		memory.New(sess.Workspace).AppendCompaction(summary)
+	} else {
+		// fallback cwd
+		if wd, err := os.Getwd(); err == nil {
+			memory.New(wd).AppendCompaction(summary)
+		} else {
+			memory.New(".").AppendCompaction(summary)
+		}
+	}
+	// Guardar también memoria en .forgen/plans para trazabilidad
+	_ = os.MkdirAll(filepath.Join(".forgen", "plans"), 0755)
+	r.messenger.Notice(sess.ID, "Compacted session history — summary injected, tail preserved")
+	r.logger.Info("compaction.summary", "session", sess.ID, "boundary", sess.CompactBoundary, "chars", len(summary))
+	return nil
+}
+
+// CompactNow expone compactación manual para CLI /compact.
+func (r *Runner) CompactNow(ctx context.Context, sess *domain.Session, focus string) error {
+	return r.maybeCompactForced(ctx, sess, focus)
+}
+
+func (r *Runner) maybeCompactForced(ctx context.Context, sess *domain.Session, focus string) error {
+	pruneable, _ := needsPruneLocal(*sess)
+	if pruneable {
+		*sess, _ = pruneLocal(*sess)
+	}
+	if r.provider == nil {
+		return r.sessions.Save(ctx, *sess)
+	}
+	summary, err := summarizeLocal(ctx, r.provider, sess.Model, *sess, focus)
+	if err != nil {
+		return err
+	}
+	*sess = applyCompactionLocal(*sess, summary)
+	if sess.Workspace != "" {
+		memory.New(sess.Workspace).AppendCompaction(summary)
+	}
+	if err := r.sessions.Save(ctx, *sess); err != nil {
+		return err
+	}
+	r.messenger.Notice(sess.ID, "Compacted (manual) — summary injected")
+	return nil
+}
+
+// Helpers locales sin importar session/compaction cycle (Runner está en otro paquete).
+func isOverflowLocal(s domain.Session, model domain.Model, md map[string]domain.ModelMetadata, threshold float64) bool {
+	limit := 128000
+	if m, ok := md[model.Key()]; ok && m.ContextLimit > 0 {
+		limit = m.ContextLimit
+	}
+	reserved := 4096
+	if m, ok := md[model.Key()]; ok && m.MaxOutput > 0 {
+		reserved = m.MaxOutput
+	}
+	usable := limit - reserved
+	if usable <= 0 {
+		usable = limit
+	}
+	budget := int(float64(usable) * threshold)
+	tokens := 0
+	for _, msg := range s.Messages {
+		tokens += 4
+		for _, p := range msg.Content {
+			tokens += len(p.Text)/4 + 1
+			if p.Call != nil {
+				tokens += len(p.Call.Name)/4 + 1
+			}
+		}
+	}
+	return tokens >= budget
+}
+
+func needsPruneLocal(s domain.Session) (bool, int) {
+	pruneable := 0
+	protected := protectedLocal(s)
+	for i, m := range s.Messages {
+		if protected[i] {
+			continue
+		}
+		if m.Role == domain.RoleTool && m.CompactedAt == nil {
+			pruneable += len(m.Text())/4 + 1
+		}
+	}
+	return pruneable >= 20000, pruneable
+}
+
+func protectedLocal(s domain.Session) map[int]bool {
+	protected := make(map[int]bool)
+	acc := 0
+	for i := len(s.Messages) - 1; i >= 0; i-- {
+		m := s.Messages[i]
+		if m.Role == domain.RoleTool {
+			if acc < 40000 {
+				protected[i] = true
+				acc += len(m.Text())/4 + 1
+			}
+		}
+	}
+	userTurns := 0
+	for i := len(s.Messages) - 1; i >= 0 && userTurns < 2; i-- {
+		if s.Messages[i].Role == domain.RoleUser {
+			protected[i] = true
+			userTurns++
+			if i+1 < len(s.Messages) {
+				protected[i+1] = true
+			}
+		}
+	}
+	for i, m := range s.Messages {
+		if m.ToolName == "read_skill" {
+			protected[i] = true
+		}
+	}
+	return protected
+}
+
+func pruneLocal(s domain.Session) (domain.Session, int) {
+	protected := protectedLocal(s)
+	now := time.Now()
+	marked := 0
+	for i := range s.Messages {
+		if protected[i] {
+			continue
+		}
+		if s.Messages[i].Role == domain.RoleTool && s.Messages[i].CompactedAt == nil {
+			t := now
+			s.Messages[i].CompactedAt = &t
+			marked++
+		}
+	}
+	if marked > 0 {
+		s.CompactionCount++
+	}
+	return s, marked
+}
+
+func summarizeLocal(ctx context.Context, provider ports.LLMProvider, model domain.Model, s domain.Session, focus string) (string, error) {
+	lang := "en"
+	for _, m := range s.Messages {
+		if m.Role == domain.RoleUser {
+			t := strings.ToLower(m.Text())
+			if strings.Contains(t, "añad") || strings.Contains(t, "crea") || strings.Contains(t, "página") || strings.Contains(t, "implementa") {
+				lang = "es"
+			}
+			break
+		}
+	}
+	var sys, user string
+	if lang == "es" {
+		sys = "Eres un asistente que resume conversaciones para continuar la sesión. Genera un resumen detallado pero conciso. Esta será la ÚNICA memoria disponible al continuar, así que preserva: qué se hizo, en qué se trabaja, archivos modificados y estado, qué falta por hacer, peticiones/restricciones clave y decisiones técnicas con porqué. Sé conciso pero suficiente."
+		user = "Resume nuestra conversación anterior. Este resumen será el único contexto al continuar, así que preserva: qué se logró, trabajo en progreso, archivos involucrados, próximos pasos y peticiones/restricciones clave."
+	} else {
+		sys = "You are an assistant that summarizes conversations to continue the session. Generate a detailed but concise summary. This will be the ONLY memory when continuing, so preserve: what was done, what is in progress, files modified and status, what remains, key requests/constraints and decisions with rationale. Be concise but sufficient."
+		user = "Summarize our conversation above. This summary will be the only context when continuing, so preserve: what was accomplished, work in progress, files involved, next steps and key requests/constraints."
+	}
+	if strings.TrimSpace(focus) != "" {
+		if lang == "es" {
+			user += "\n\nEnfoque solicitado: " + focus
+		} else {
+			user += "\n\nFocus requested: " + focus
+		}
+	}
+	// Construir msgs visibles
+	var msgs []domain.Message
+	msgs = append(msgs, domain.NewTextMessage(domain.RoleSystem, sys))
+	// Visible projection
+	for _, m := range s.Messages {
+		proj := m
+		if m.CompactedAt != nil && m.Role == domain.RoleTool {
+			proj = domain.Message{Role: m.Role, ToolCallID: m.ToolCallID, ToolName: m.ToolName, Content: []domain.ContentPart{{Type: "text", Text: "[tool result cleared]"}}}
+		}
+		msgs = append(msgs, proj)
+	}
+	msgs = append(msgs, domain.NewTextMessage(domain.RoleUser, user))
+	var summary strings.Builder
+	req := ports.ChatRequest{Model: model, Messages: msgs, Temperature: 0.2, MaxTokens: 2048}
+	err := provider.StreamChat(ctx, req, func(ev ports.StreamEvent) error {
+		if d, ok := ev.(ports.TextDeltaEvent); ok {
+			summary.WriteString(d.Text)
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	out := strings.TrimSpace(summary.String())
+	if out == "" {
+		return "", fmt.Errorf("compaction: resumen vacío")
+	}
+	return out, nil
+}
+
+func applyCompactionLocal(s domain.Session, summary string) domain.Session {
+	tail := 20
+	if len(s.Messages) < tail {
+		tail = len(s.Messages)
+	}
+	s.CompactBoundary = len(s.Messages) - tail
+	if s.CompactBoundary < 0 {
+		s.CompactBoundary = 0
+	}
+	s.CompactionSummary = strings.TrimSpace(summary)
+	s.CompactionCount++
+	return s
+}
+
+func envOr(def, key string) string {
+	// wrapper para testabilidad sin os.Getenv directo
+	_ = def
+	// lazy import avoid cycle: usar os.Getenv via string key
+	return strings.TrimSpace(getEnv(key))
+}
+
+// getEnv es sobreescribible en tests.
+var getEnv = func(key string) string {
+	// import os lazily to avoid import loop in header
+	return osGetenv(key)
+}
+
+// osGetenv via indirection to allow mock
+func osGetenv(key string) string {
+	return os.Getenv(key)
+}
+
+func extractPatchPath(patch string) string {
+	for _, line := range strings.Split(patch, "\n") {
+		if strings.HasPrefix(line, "*** Update File:") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "*** Update File:"))
+		}
+		if strings.HasPrefix(line, "*** Add File:") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "*** Add File:"))
+		}
+		if strings.HasPrefix(line, "+++ b/") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "+++ b/"))
+		}
+	}
+	return ""
 }
 
 func errorString(err error) string {

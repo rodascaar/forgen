@@ -21,23 +21,28 @@ import (
 
 // sessionMeta es la cabecera del archivo de sesión.
 type sessionMeta struct {
-	Type      string    `json:"type"`
-	ID        string    `json:"id"`
-	Workspace string    `json:"workspace"`
-	Provider  string    `json:"provider"`
-	Model     string    `json:"model"`
-	Agent     string    `json:"agent"`
-	StartedAt time.Time `json:"started_at"`
-	Summary   string    `json:"summary"`
+	Type              string    `json:"type"`
+	ID                string    `json:"id"`
+	Workspace         string    `json:"workspace"`
+	Provider          string    `json:"provider"`
+	Model             string    `json:"model"`
+	Agent             string    `json:"agent"`
+	StartedAt         time.Time `json:"started_at"`
+	Summary           string    `json:"summary"`
+	CompactBoundary   int       `json:"compact_boundary,omitempty"`
+	CompactionCount   int       `json:"compaction_count,omitempty"`
+	CompactionSummary string    `json:"compaction_summary,omitempty"`
 }
 
 type messageRecord struct {
-	Type       string              `json:"type"`
-	Role       string              `json:"role"`
-	Content    []contentPartRecord `json:"content"`
-	ToolCallID string              `json:"tool_call_id,omitempty"`
-	ToolName   string              `json:"tool_name,omitempty"`
-	CreatedAt  time.Time           `json:"created_at"`
+	Type        string              `json:"type"`
+	Role        string              `json:"role"`
+	Content     []contentPartRecord `json:"content"`
+	ToolCallID  string              `json:"tool_call_id,omitempty"`
+	ToolName    string              `json:"tool_name,omitempty"`
+	CreatedAt   time.Time           `json:"created_at"`
+	CompactedAt *time.Time          `json:"compacted_at,omitempty"`
+	IsSummary   bool                `json:"is_summary,omitempty"`
 }
 
 type contentPartRecord struct {
@@ -149,25 +154,30 @@ func (s *JSONLStore) rewrite(session domain.Session, path string) error {
 
 func writeMeta(file *os.File, session domain.Session) error {
 	meta := sessionMeta{
-		Type:      metaRecordType,
-		ID:        session.ID,
-		Workspace: session.Workspace,
-		Provider:  session.Model.Provider,
-		Model:     session.Model.ID,
-		Agent:     session.Agent,
-		StartedAt: session.StartedAt,
-		Summary:   session.Summary(),
+		Type:              metaRecordType,
+		ID:                session.ID,
+		Workspace:         session.Workspace,
+		Provider:          session.Model.Provider,
+		Model:             session.Model.ID,
+		Agent:             session.Agent,
+		StartedAt:         session.StartedAt,
+		Summary:           session.Summary(),
+		CompactBoundary:   session.CompactBoundary,
+		CompactionCount:   session.CompactionCount,
+		CompactionSummary: session.CompactionSummary,
 	}
 	return writeJSONLine(file, meta)
 }
 
 func writeMessage(file *os.File, message domain.Message) error {
 	record := messageRecord{
-		Type:       messageRecordType,
-		Role:       string(message.Role),
-		ToolCallID: message.ToolCallID,
-		ToolName:   message.ToolName,
-		CreatedAt:  message.CreatedAt,
+		Type:        messageRecordType,
+		Role:        string(message.Role),
+		ToolCallID:  message.ToolCallID,
+		ToolName:    message.ToolName,
+		CreatedAt:   message.CreatedAt,
+		CompactedAt: message.CompactedAt,
+		IsSummary:   message.IsSummary,
 	}
 	for _, part := range message.Content {
 		content := contentPartRecord{Type: part.Type, Text: part.Text}
@@ -217,12 +227,15 @@ func (s *JSONLStore) Load(_ context.Context, id string) (domain.Session, error) 
 				return domain.Session{}, fmt.Errorf("cabecera de sesión %s corrupta: %w", id, err)
 			}
 			session = domain.Session{
-				ID:        meta.ID,
-				Workspace: meta.Workspace,
-				Model:     domain.Model{Provider: meta.Provider, ID: meta.Model},
-				Agent:     meta.Agent,
-				StartedAt: meta.StartedAt,
-				UpdatedAt: meta.StartedAt,
+				ID:                meta.ID,
+				Workspace:         meta.Workspace,
+				Model:             domain.Model{Provider: meta.Provider, ID: meta.Model},
+				Agent:             meta.Agent,
+				StartedAt:         meta.StartedAt,
+				UpdatedAt:         meta.StartedAt,
+				CompactBoundary:   meta.CompactBoundary,
+				CompactionCount:   meta.CompactionCount,
+				CompactionSummary: meta.CompactionSummary,
 			}
 			lineIndex++
 			continue
@@ -232,10 +245,12 @@ func (s *JSONLStore) Load(_ context.Context, id string) (domain.Session, error) 
 			return domain.Session{}, fmt.Errorf("mensaje %d de sesión %s corrupto: %w", lineIndex, id, err)
 		}
 		message := domain.Message{
-			Role:       domain.Role(record.Role),
-			ToolCallID: record.ToolCallID,
-			ToolName:   record.ToolName,
-			CreatedAt:  record.CreatedAt,
+			Role:        domain.Role(record.Role),
+			ToolCallID:  record.ToolCallID,
+			ToolName:    record.ToolName,
+			CreatedAt:   record.CreatedAt,
+			CompactedAt: record.CompactedAt,
+			IsSummary:   record.IsSummary,
 		}
 		for _, part := range record.Content {
 			contentPart := domain.ContentPart{Type: part.Type, Text: part.Text}
@@ -280,13 +295,16 @@ func (s *JSONLStore) List(_ context.Context, limit int) ([]domain.Session, error
 			continue // ignorar archivos corruptos en el listado
 		}
 		sessions = append(sessions, domain.Session{
-			ID:           meta.ID,
-			Workspace:    meta.Workspace,
-			Model:        domain.Model{Provider: meta.Provider, ID: meta.Model},
-			Agent:        meta.Agent,
-			StartedAt:    meta.StartedAt,
-			UpdatedAt:    meta.StartedAt,
-			SummaryCache: meta.Summary,
+			ID:                meta.ID,
+			Workspace:         meta.Workspace,
+			Model:             domain.Model{Provider: meta.Provider, ID: meta.Model},
+			Agent:             meta.Agent,
+			StartedAt:         meta.StartedAt,
+			UpdatedAt:         meta.StartedAt,
+			SummaryCache:      meta.Summary,
+			CompactBoundary:   meta.CompactBoundary,
+			CompactionCount:   meta.CompactionCount,
+			CompactionSummary: meta.CompactionSummary,
 		})
 	}
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].StartedAt.After(sessions[j].StartedAt) })
@@ -343,12 +361,15 @@ func (s *JSONLStore) Import(_ context.Context, data []byte) (domain.Session, err
 				return domain.Session{}, fmt.Errorf("cabecera de sesión corrupta: %w", err)
 			}
 			session = domain.Session{
-				ID:        meta.ID,
-				Workspace: meta.Workspace,
-				Model:     domain.Model{Provider: meta.Provider, ID: meta.Model},
-				Agent:     meta.Agent,
-				StartedAt: meta.StartedAt,
-				UpdatedAt: meta.StartedAt,
+				ID:                meta.ID,
+				Workspace:         meta.Workspace,
+				Model:             domain.Model{Provider: meta.Provider, ID: meta.Model},
+				Agent:             meta.Agent,
+				StartedAt:         meta.StartedAt,
+				UpdatedAt:         meta.StartedAt,
+				CompactBoundary:   meta.CompactBoundary,
+				CompactionCount:   meta.CompactionCount,
+				CompactionSummary: meta.CompactionSummary,
 			}
 			continue
 		}
@@ -357,10 +378,12 @@ func (s *JSONLStore) Import(_ context.Context, data []byte) (domain.Session, err
 			return domain.Session{}, fmt.Errorf("mensaje corrupto: %w", err)
 		}
 		message := domain.Message{
-			Role:       domain.Role(record.Role),
-			ToolCallID: record.ToolCallID,
-			ToolName:   record.ToolName,
-			CreatedAt:  record.CreatedAt,
+			Role:        domain.Role(record.Role),
+			ToolCallID:  record.ToolCallID,
+			ToolName:    record.ToolName,
+			CreatedAt:   record.CreatedAt,
+			CompactedAt: record.CompactedAt,
+			IsSummary:   record.IsSummary,
 		}
 		for _, part := range record.Content {
 			contentPart := domain.ContentPart{Type: part.Type, Text: part.Text}

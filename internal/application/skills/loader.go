@@ -116,14 +116,40 @@ func firstParagraph(body string) string {
 }
 
 // Catalog renderiza el listado de skills para el system prompt.
-func Catalog(skills []Skill) string {
+func Catalog(skills []Skill) string { return CatalogWithBudget(skills, 25000, 5000) }
+
+// CatalogWithBudget aplica budget LIFO 25k/5k por skill (7.6.2).
+func CatalogWithBudget(skills []Skill, totalBudget, perSkillBudget int) string {
 	if len(skills) == 0 {
 		return ""
 	}
 	var builder strings.Builder
 	builder.WriteString("Habilidades disponibles (usa la herramienta read_skill para ver el detalle):\n")
-	for _, skill := range skills {
-		fmt.Fprintf(&builder, "- %s: %s\n", skill.Name, skill.Description)
+	used := 0
+	// LIFO: últimas (más específicas) primero, pero catalog ordenado alfabético — usar reverso LIFO
+	for i := len(skills) - 1; i >= 0; i-- {
+		s := skills[i]
+		line := fmt.Sprintf("- %s: %s\n", s.Name, s.Description)
+		if used+len(line) > totalBudget {
+			break
+		}
+		if len(s.Description) > perSkillBudget {
+			line = fmt.Sprintf("- %s: %s\n", s.Name, s.Description[:perSkillBudget]+"...")
+		}
+		// prepend para mantener orden
+		builder.WriteString(line)
+		used += len(line)
+	}
+	// Si ninguna LIFO cupo, fallback a Catalog simple truncado
+	if used == 0 {
+		for _, s := range skills {
+			line := fmt.Sprintf("- %s: %s\n", s.Name, s.Description)
+			if used+len(line) > totalBudget {
+				break
+			}
+			builder.WriteString(line)
+			used += len(line)
+		}
 	}
 	return strings.TrimSpace(builder.String())
 }

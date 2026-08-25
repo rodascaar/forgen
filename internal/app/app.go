@@ -9,9 +9,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/rodascaar/forgen/internal/adapters/out/credentials"
+	"github.com/rodascaar/forgen/internal/application/memory"
 	"github.com/rodascaar/forgen/internal/adapters/out/exec"
 	"github.com/rodascaar/forgen/internal/adapters/out/fs"
 	gitadapter "github.com/rodascaar/forgen/internal/adapters/out/git"
@@ -39,6 +41,7 @@ import (
 	"github.com/rodascaar/forgen/internal/application/web"
 	"github.com/rodascaar/forgen/internal/core/domain"
 	"github.com/rodascaar/forgen/internal/core/ports"
+	appplan "github.com/rodascaar/forgen/internal/application/plan"
 )
 
 // App es el composition root: construye el grafo de dependencias con DI manual.
@@ -178,6 +181,7 @@ func NewApp(logger *slog.Logger) (*App, error) {
 
 	// Herramientas de planificación y delegación
 	registry.Register(apptodo.NewTool(todoStore))
+	registry.Register(appplan.NewTool(todoStore))
 	registry.Register(apptask.NewTool(taskStore, taskExecutor))
 
 	// Inyectar Runner aislado para subagentes con tools filtradas por tipo (kimchi/opencode).
@@ -215,15 +219,22 @@ func NewApp(logger *slog.Logger) (*App, error) {
 		if len(task.Config.Tools) > 0 {
 			agentDef.AllowedTools = task.Config.Tools
 		}
-		// Messenger no-op + responder que niega confirms interactivos (subagente no pregunta)
 		messenger := &noopMessenger{}
 		responder := &autoDenyResponder{}
-		// Crear permisos en modo auto para subagente (hereda rules filtradas)
-		// Se usa App.NewRunner con workspace actual.
 		ws := workspace
-		// Capturar servicios necesarios (sessionService, usageService, etc.) vía closure
-		// Construir Runner manual para respetar AllowedTools del subagente
-		return newSubAgentRunner(ctx, provider, model, agentDef, ws, messenger, responder, registry, sessionService, usageService, credentialStore, logger, cfg)
+		// Fresh window con App context (AGENTS.md, toolchain, skills)
+		tmpApp := &App{
+			FileSystem:      fileSystem,
+			Language:        language.NewDetector(),
+			Toolchain:       language.NewToolchainProbe(),
+			Skills:          discoveredSkills,
+			Logger:          logger,
+			ActiveFermentID: "",
+			ToolRegistry:    registry,
+			SessionService:  sessionService,
+		}
+		// Cargar config actual para Compaction + lenguaje
+		return tmpApp.newSubAgentRunner(ctx, provider, model, agentDef, ws, messenger, responder, cfg)
 	})
 
 	// Config efectiva (para web search y MCP).
@@ -324,6 +335,51 @@ func (a *App) NewRunner(ctx context.Context, deps RunnerDeps) (*agent.Runner, er
 		persistedRules,
 	)
 
+	// Resolver idioma es/en para prompts (config.language → env FORGEN_LANG → en).
+	lang := domain.ResolveLanguage(appConfig.Language)
+	if lang == "en" {
+		if envLang := domain.ResolveLanguage(getEnvLang()); envLang == "es" {
+			lang = "es"
+		}
+	}
+	// Si deps.Agent trae prompt vacío, resolver por idioma via PromptFor.
+	resolvedAgent := deps.Agent
+	if resolvedAgent.SystemPrompt == "" {
+		if p := domain.PromptFor(resolvedAgent.Name, lang); p != "" {
+			resolvedAgent.SystemPrompt = p
+		}
+	} else {
+		// Si el agente viene de BuiltinAgents default (en), respetar lang override si config pide es.
+		if lang == "es" && resolvedAgent.Name == "build" {
+			if p := domain.PromptFor("build", "es"); p != "" && resolvedAgent.SystemPrompt != p {
+				// Solo sobrescribir si el prompt es el legacy en (no custom de usuario).
+				// Heurística: si contiene "You are forgen" en inglés, es legacy.
+				if isLegacyEnglishPrompt(resolvedAgent.SystemPrompt) {
+					resolvedAgent.SystemPrompt = p
+				}
+			}
+		}
+		if lang == "es" && resolvedAgent.Name == "plan" {
+			if p := domain.PromptFor("plan", "es"); p != "" && isLegacyEnglishPrompt(resolvedAgent.SystemPrompt) {
+				resolvedAgent.SystemPrompt = p
+			}
+		}
+	}
+	// Tuning por familia: hint para 9B vs GPT (agnóstico).
+	modelFamilyHint := ""
+	if isGPTFamily(deps.Model) {
+		if lang == "es" {
+			modelFamilyHint = "Familia del modelo: GPT/Codex — prefiere `apply_patch` para cambios multi-archivo/revisables; usa `edit` solo para fix quirúrgico de 1 línea."
+		} else {
+			modelFamilyHint = "Model family: GPT/Codex — prefer `apply_patch` for multi-file/reviewable changes; use `edit` only for 1-line surgical fix."
+		}
+	} else {
+		if lang == "es" {
+			modelFamilyHint = "Familia del modelo: ligero/local (9B-12B) — prefiere `edit` y `write` quirúrgicos; evita patches grandes; usa `read_many_files` para batch."
+		} else {
+			modelFamilyHint = "Model family: lightweight/local (9B-12B) — prefer surgical `edit`/`write`; avoid large patches; use `read_many_files` for batch reads."
+		}
+	}
 	systemPrompt := func(ctx context.Context) (string, error) {
 		blocks, err := agent.LoadProjectContext(ctx, deps.Workspace, a.FileSystem)
 		if err != nil {
@@ -338,13 +394,28 @@ func (a *App) NewRunner(ctx context.Context, deps RunnerDeps) (*agent.Runner, er
 		if fermentBlock != "" {
 			blocks = append(blocks, agent.ContextBlock{Title: "ferment", Content: fermentBlock})
 		}
-		// Inyectar el catálogo de skills.
-		if catalog := skills.Catalog(a.Skills); catalog != "" {
+		// Inyectar memoria workspace .forgen/memory.md (7.6.1)
+		if mem := loadMemoryBlock(deps.Workspace); mem != "" {
+			blocks = append(blocks, agent.ContextBlock{Title: "memory", Content: mem})
+		}
+		// Inyectar el catálogo de skills con budget 25k/5k LIFO (7.6.2)
+		if catalog := skills.CatalogWithBudget(a.Skills, 25000, 5000); catalog != "" {
 			blocks = append(blocks, agent.ContextBlock{Title: "skills", Content: catalog})
 		}
-		return agent.ComposeSystemPrompt(deps.Agent.SystemPrompt, blocks, toolchain), nil
+		sys := resolvedAgent.SystemPrompt
+		if modelFamilyHint != "" {
+			sys += "\n\n" + modelFamilyHint
+		}
+		return agent.ComposeSystemPrompt(sys, blocks, toolchain), nil
 	}
 
+	// PostToolUse diagnostics closure (7.5.2) — feed LSP diagnostics after edit/write/patch.
+	var diagFn func(context.Context, string) string
+	if a.LSP != nil {
+		diagFn = func(ctx context.Context, path string) string {
+			return a.LSP.DiagnosticsFor(ctx, path)
+		}
+	}
 	return agent.NewRunner(agent.Options{
 		Provider:        deps.Provider,
 		Tools:           a.ToolRegistry,
@@ -356,7 +427,13 @@ func (a *App) NewRunner(ctx context.Context, deps RunnerDeps) (*agent.Runner, er
 		Usage:           a.UsageService,
 		MaxIterations:   appConfig.MaxIterations,
 		ReasoningEffort: reasoningEffortOr(deps.ReasoningEffort, appConfig.ReasoningEffort),
-		Logger:          a.Logger,
+		Compaction: agent.CompactionConfig{
+			Threshold:     appConfig.Compaction.CompactionThreshold(),
+			Disabled:      appConfig.Compaction.Disabled,
+			ModelMetadata: appConfig.ModelMetadata,
+		},
+		Diagnostics: diagFn,
+		Logger:      a.Logger,
 	})
 }
 
@@ -533,7 +610,7 @@ func (a *App) ResolveRunModel(ctx context.Context, prompt, overrideProvider, ove
 	return model, provider, phase, nil
 }
 
-// SelectedAgent devuelve el agente configurado o por defecto.
+// SelectedAgent devuelve el agente configurado o por defecto (respeta language es/en).
 func (a *App) SelectedAgent(appConfig domain.AppConfig, requested string) (domain.Agent, error) {
 	name := requested
 	if name == "" {
@@ -542,11 +619,58 @@ func (a *App) SelectedAgent(appConfig domain.AppConfig, requested string) (domai
 	if name == "" {
 		name = "build"
 	}
-	agents := domain.BuiltinAgents()
+	lang := domain.ResolveLanguage(appConfig.Language)
+	if lang == "en" {
+		if envLang := domain.ResolveLanguage(getEnvLang()); envLang == "es" {
+			lang = "es"
+		}
+	}
+	agents := domain.BuiltinAgentsForLang(lang)
 	if agentDef, ok := domain.FindAgent(agents, name); ok {
 		return agentDef, nil
 	}
 	return domain.Agent{}, fmt.Errorf("agente %q no encontrado (disponibles: build, plan)", name)
+}
+
+func getEnvLang() string {
+	// FORGEN_LANG o LANG
+	if v := os.Getenv("FORGEN_LANG"); v != "" {
+		return v
+	}
+	if v := os.Getenv("LANG"); v != "" {
+		if len(v) >= 2 && (v[:2] == "es" || v[:2] == "ES") {
+			return "es"
+		}
+	}
+	return "en"
+}
+
+func isLegacyEnglishPrompt(p string) bool {
+	return strings.Contains(p, "You are forgen") || strings.Contains(p, "You are forgen in plan")
+}
+
+func loadMemoryBlock(workspace string) string {
+	m := memory.New(workspace)
+	if b := m.LoadWorkspace(context.Background()); b != "" {
+		return b
+	}
+	return ""
+}
+
+func isGPTFamily(m domain.Model) bool {
+	id := strings.ToLower(m.ID)
+	prov := strings.ToLower(m.Provider)
+	if strings.Contains(id, "gpt") || strings.Contains(id, "codex") || strings.Contains(id, "o1") || strings.Contains(id, "o3") {
+		return true
+	}
+	if prov == "openai" && (strings.Contains(id, "gpt") || strings.Contains(id, "mini") || strings.Contains(id, "nano")) {
+		return true
+	}
+	// openai_compatible with gpt in id still counts
+	if strings.Contains(prov, "openai") && strings.Contains(id, "gpt") {
+		return true
+	}
+	return false
 }
 
 // SnapshotWorkspace crea un checkpoint previo a un run del agente (solo build)
@@ -654,23 +778,39 @@ func (r *subAgentRunner) Run(ctx context.Context, workspace, prompt string) (str
 	return result.FinalText, nil
 }
 
-func newSubAgentRunner(ctx context.Context, provider ports.LLMProvider, model domain.Model, agentDef domain.Agent, workspace string, messenger ports.Messenger, responder ports.PermissionResponder, registry *tools.Registry, sessionService *session.Service, usageService *usage.Service, credStore ports.CredentialStore, logger *slog.Logger, cfg domain.AppConfig) (*subAgentRunner, error) {
-	// Permisos auto para subagente (hereda reglas globales, niega interactivo)
+func (a *App) newSubAgentRunner(ctx context.Context, provider ports.LLMProvider, model domain.Model, agentDef domain.Agent, workspace string, messenger ports.Messenger, responder ports.PermissionResponder, cfg domain.AppConfig) (*subAgentRunner, error) {
 	decider := permission.NewService(domain.PermissionModeAuto, workspace, cfg.Permissions.Rules, nil)
 	systemPrompt := func(ctx context.Context) (string, error) {
-		return agentDef.SystemPrompt, nil
+		blocks, err := agent.LoadProjectContext(ctx, workspace, a.FileSystem)
+		if err != nil {
+			return agentDef.SystemPrompt, nil
+		}
+		toolchain, _ := agent.LoadToolchainContext(ctx, workspace, a.Language, a.Toolchain)
+		fermentBlock := a.activeFermentBlock(ctx)
+		if fermentBlock != "" {
+			blocks = append(blocks, agent.ContextBlock{Title: "ferment", Content: fermentBlock})
+		}
+		if catalog := skills.Catalog(a.Skills); catalog != "" {
+			blocks = append(blocks, agent.ContextBlock{Title: "skills", Content: catalog})
+		}
+		return agent.ComposeSystemPrompt(agentDef.SystemPrompt, blocks, toolchain), nil
 	}
 	runner, err := agent.NewRunner(agent.Options{
 		Provider:      provider,
-		Tools:         registry,
+		Tools:         a.ToolRegistry,
 		Decider:       decider,
 		Responder:     responder,
 		Messenger:     messenger,
-		Sessions:      sessionService,
+		Sessions:      a.SessionService,
 		SystemPrompt:  systemPrompt,
-		Usage:         usageService,
+		Usage:         a.UsageService,
 		MaxIterations: taskMaxTurns(agentDef, cfg),
-		Logger:        logger,
+		Compaction: agent.CompactionConfig{
+			Threshold:     cfg.Compaction.CompactionThreshold(),
+			Disabled:      cfg.Compaction.Disabled,
+			ModelMetadata: cfg.ModelMetadata,
+		},
+		Logger: a.Logger,
 	})
 	if err != nil {
 		return nil, err

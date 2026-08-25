@@ -39,7 +39,9 @@ func DefaultRoles() []ModelRole {
 
 // ModelMetadata describe capacidades de un modelo para el routing.
 type ModelMetadata struct {
-	Tier   Tier   `yaml:"tier"`
-	Vision bool   `yaml:"vision"`
-	Desc   string `yaml:"description,omitempty"`
+	Tier         Tier   `yaml:"tier"`
+	Vision       bool   `yaml:"vision"`
+	Desc         string `yaml:"description,omitempty"`
+	ContextLimit int    `yaml:"context_limit,omitempty"` // tokens ventana contexto (default 128k)
+	MaxOutput    int    `yaml:"max_output,omitempty"`    // max_output_tokens reservado
 }

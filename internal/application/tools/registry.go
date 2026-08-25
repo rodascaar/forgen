@@ -46,6 +46,7 @@ func NewRegistry(fs ports.FileSystem, executor ports.Executor, git ports.Git, ou
 		outputLimit: outputLimit,
 	}
 	registry.register(registry.readTool())
+	registry.register(registry.readManyTool())
 	registry.register(registry.writeTool())
 	registry.register(registry.editTool())
 	registry.register(registry.globTool())
@@ -148,7 +149,7 @@ type readArgs struct {
 }
 
 func (r *Registry) readTool() ToolDef {
-	return newGenericTool("read", "Lee el contenido de un archivo (con offset y límite opcionales para archivos grandes).",
+	return newGenericTool("read", "Lee el contenido de un archivo (con offset/limit para paginar). WHEN_TO_USE: necesitas ver código/config antes de editar; para 2+ archivos usa read_many_files en un solo call (ahorra turnos en 9B). Ejemplo: {\"path\":\"src/app/page.tsx\"} o {\"path\":\"go.mod\",\"limit\":50}. Si el archivo no existe, el error indica ruta incorrecta — verifica con glob.",
 		objectSchema(map[string]any{
 			"path":   stringProp("Ruta del archivo relativa o absoluta"),
 			"offset": intProp("Línea inicial opcional (1-based)"),
@@ -182,13 +183,45 @@ func (r *Registry) readTool() ToolDef {
 		})
 }
 
+type readManyArgs struct {
+	Paths []string `json:"paths"`
+}
+
+func (r *Registry) readManyTool() ToolDef {
+	return newGenericTool("read_many_files", "Lee múltiples archivos en un solo call (batch). WHEN_TO_USE: necesitas 2+ archivos (ej: layout + page + config) — ahorra turnos críticamente en modelos 9B/12B donde cada tool call es caro. Alternativa a N llamadas read. Ejemplo: {\"paths\":[\"src/app/layout.tsx\",\"src/app/page.tsx\",\"package.json\"]}. Si un path falla, el output indica error per file pero el resto se devuelve.",
+		objectSchema(map[string]any{
+			"paths": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Lista de rutas a leer (relativas o absolutas, 2-10 archivos)"},
+		}, "paths"),
+		func(ctx context.Context, args readManyArgs) domain.ToolResult {
+			if len(args.Paths) == 0 {
+				return domain.ToolResult{OK: false, Error: fmt.Errorf("paths vacío")}
+			}
+			if len(args.Paths) > 10 {
+				return domain.ToolResult{OK: false, Error: fmt.Errorf("máximo 10 archivos por llamada, recibidos %d", len(args.Paths))}
+			}
+			var builder strings.Builder
+			for i, p := range args.Paths {
+				data, err := r.fs.Read(ctx, p)
+				if err != nil {
+					fmt.Fprintf(&builder, "=== %s ===\nERROR: %v\n", p, err)
+				} else {
+					fmt.Fprintf(&builder, "=== %s ===\n%s\n", p, string(data))
+				}
+				if i < len(args.Paths)-1 {
+					builder.WriteString("\n")
+				}
+			}
+			return domain.ToolResult{OK: true, Output: builder.String()}
+		})
+}
+
 type writeArgs struct {
 	Path    string `json:"path"`
 	Content string `json:"content"`
 }
 
 func (r *Registry) writeTool() ToolDef {
-	return newGenericTool("write", "Escribe contenido en un archivo (crea directorios y sobreescribe).",
+	return newGenericTool("write", "Crea o sobrescribe un archivo completo (crea directorios). WHEN_TO_USE: archivo nuevo o reemplazo total. Para cambios quirúrgicos usa edit; para multi-archivo usa apply_patch (GPT prefiere apply_patch, 9B prefiere edit). Ejemplo: {\"path\":\"src/app/dashboard/page.tsx\",\"content\":\"export default function Dashboard(){...}\"} — verifica luego con read y bash build.",
 		objectSchema(map[string]any{
 			"path":    stringProp("Ruta del archivo a escribir"),
 			"content": stringProp("Contenido completo del archivo"),
@@ -208,11 +241,11 @@ type editArgs struct {
 }
 
 func (r *Registry) editTool() ToolDef {
-	return newGenericTool("edit", "Reemplaza la primera ocurrencia exacta de old_string por new_string en un archivo.",
+	return newGenericTool("edit", "Reemplaza EXACTAMENTE una ocurrencia de old_string por new_string. WHEN_TO_USE: fix quirúrgico de 1 bloque. Requiere old_string presente exactamente 1 vez — incluye 3-5 líneas de contexto para unicidad; si aparece 0 o 2+ veces falla y debes re-leer el archivo con más contexto. Para 2+ cambios en mismo archivo o multi-archivo usa apply_patch (GPT). Ejemplo: {\"path\":\"src/router.go\",\"old_string\":\"  if err != nil {\\n    return err\\n  }\",\"new_string\":\"  if err != nil {\\n    return fmt.Errorf(\\\"wrap: %w\\\", err)\\n  }\"}.",
 		objectSchema(map[string]any{
-			"path":       stringProp("Ruta del archivo a editar"),
-			"old_string": stringProp("Texto exacto a reemplazar (debe aparecer una vez)"),
-			"new_string": stringProp("Texto de reemplazo"),
+			"path":       stringProp("Ruta del archivo a editar (relativa o absoluta)"),
+			"old_string": stringProp("Texto exacto a reemplazar — debe aparecer exactamente 1 vez incluyendo indentación y saltos de línea"),
+			"new_string": stringProp("Texto de reemplazo — mantén indentación y estilo del archivo"),
 		}, "path", "old_string", "new_string"),
 		func(ctx context.Context, args editArgs) domain.ToolResult {
 			data, err := r.fs.Read(ctx, args.Path)
@@ -240,9 +273,9 @@ type globArgs struct {
 }
 
 func (r *Registry) globTool() ToolDef {
-	return newGenericTool("glob", "Encuentra archivos por patrón glob (ej: **/*.go).",
+	return newGenericTool("glob", "Descubre archivos por patrón glob. WHEN_TO_USE: antes de leer cuando no conoces la ruta exacta; para mapear estructura del repo. Usa ** para recursivo. Ejemplo: \"**/*.go\" lista Go files, \"src/**/*.{ts,tsx}\" lista TS, \"**/AGENTS.md\" encuentra configs. Si sin coincidencias, prueba patrón más amplio o verifica cwd con bash pwd.",
 		objectSchema(map[string]any{
-			"pattern": stringProp("Patrón glob"),
+			"pattern": stringProp("Patrón glob — ej: **/*.go, src/**/*.tsx, **/*.md"),
 		}, "pattern"),
 		func(ctx context.Context, args globArgs) domain.ToolResult {
 			matches, err := r.fs.Glob(ctx, args.Pattern)
@@ -263,11 +296,11 @@ type grepArgs struct {
 }
 
 func (r *Registry) grepTool() ToolDef {
-	return newGenericTool("grep", "Busca un patrón regex en archivos del proyecto y devuelve coincidencias con línea y texto.",
+	return newGenericTool("grep", "Búsqueda regex en archivos (ripgrep-like). WHEN_TO_USE: localizar símbolos, imports, TODOs antes de read. Devuelve file:line:text. Usa include para filtrar por extensión. Ejemplo: {\"query\":\"func.*Health\",\"include\":\"*.go\"} o {\"query\":\"dashboard\",\"include\":\"*.{ts,tsx}\"}. Para búsquedas amplias, empieza con glob; si 0 resultados, simplifica regex.",
 		objectSchema(map[string]any{
-			"query":   stringProp("Patrón regex a buscar"),
-			"path":    stringProp("Directorio raíz de búsqueda (por defecto el workspace)"),
-			"include": stringProp("Filtro glob opcional, ej: *.go, *.{ts,tsx}"),
+			"query":   stringProp("Patrón regex — ej: func Handle, TODO|FIXME, import.*react"),
+			"path":    stringProp("Directorio raíz de búsqueda (por defecto .)"),
+			"include": stringProp("Filtro glob opcional — ej: *.go, *.{ts,tsx}, *.md"),
 		}, "query"),
 		func(ctx context.Context, args grepArgs) domain.ToolResult {
 			root := args.Path
@@ -295,10 +328,10 @@ type bashArgs struct {
 }
 
 func (r *Registry) bashTool() ToolDef {
-	return newGenericTool("bash", "Ejecuta un comando de shell en el workspace y devuelve stdout/stderr y exit code.",
+	return newGenericTool("bash", "Ejecuta comando shell y devuelve stdout/stderr + exit code. WHEN_TO_USE: validar tras editar (go test ./..., npm test, golangci-lint, git status), inspeccionar estado (docker ps, ls). Siempre verifica exit code; si !=0 el output contiene el error. Ejemplo: {\"command\":\"go test ./... 2>&1 | head -n 100\"} o {\"command\":\"npm run build\"}. Nunca uses sudo/rm -rf / — será bloqueado.",
 		objectSchema(map[string]any{
-			"command": stringProp("Comando shell a ejecutar"),
-			"workdir": stringProp("Directorio de trabajo opcional"),
+			"command": stringProp("Comando shell — ej: go test ./..., npm run build, ls -la, docker ps"),
+			"workdir": stringProp("Directorio de trabajo opcional (por defecto .)"),
 		}, "command"),
 		func(ctx context.Context, args bashArgs) domain.ToolResult {
 			workdir := args.Workdir
@@ -321,7 +354,7 @@ func (r *Registry) bashTool() ToolDef {
 }
 
 func (r *Registry) gitStatusTool() ToolDef {
-	return newGenericTool("git_status", "Devuelve el estado del working tree de git (porcelain).",
+	return newGenericTool("git_status", "Git status porcelain — muestra archivos modificados/no trackeados. WHEN_TO_USE: antes de editar para entender working tree; tras editar para confirmar cambios. Ejemplo: sin args. Si (working tree limpio), no hay cambios.",
 		objectSchema(nil),
 		func(ctx context.Context, _ map[string]any) domain.ToolResult {
 			status, err := r.git.Status(ctx, ".")
@@ -340,9 +373,9 @@ type gitDiffArgs struct {
 }
 
 func (r *Registry) gitDiffTool() ToolDef {
-	return newGenericTool("git_diff", "Devuelve el diff del working tree (no stageado por defecto).",
+	return newGenericTool("git_diff", "Git diff del working tree (no-stageado por defecto). WHEN_TO_USE: revisar cambios antes de commit o tras editar para validar patch. Ejemplo: {} para unstaged, {\"staged\":true} para staged. Usa para decidir si revertir con /undo.",
 		objectSchema(map[string]any{
-			"staged": boolProp("Si true, devuelve el diff stageado"),
+			"staged": boolProp("Si true, diff stageado (git diff --staged)"),
 		}),
 		func(ctx context.Context, args gitDiffArgs) domain.ToolResult {
 			diff, err := r.git.Diff(ctx, ".", args.Staged)
@@ -361,9 +394,9 @@ type applyPatchArgs struct {
 }
 
 func (r *Registry) applyPatchTool() ToolDef {
-	return newGenericTool("apply_patch", "Aplica un patch unificado (unified diff) al workspace. Úsalo para cambios estructurados y revisables en vez de múltiples edits.",
+	return newGenericTool("apply_patch", "Aplica patch unificado al workspace. WHEN_TO_USE: cambios multi-archivo o multi-hunk revisables — preferido en GPT/Codex; en modelos 9B usa edit si no estás seguro del formato. Soporta unified diff y Codex \"*** Begin Patch\". Ejemplo unified: \"diff --git a/foo.go b/foo.go\\n@@ -1 +1 @@\\n- old\\n+ new\" o Codex: \"*** Begin Patch\\n*** Update File: src/app/page.tsx\\n@@ ...\\n*** End Patch\". Verifica con git_diff tras aplicar.",
 		objectSchema(map[string]any{
-			"patch": stringProp("Contenido del patch en formato unified diff (ej: '*** Begin Patch\\n*** Update File: path\\n@@ ...') o diff estándar"),
+			"patch": stringProp("Patch unified diff o Codex *** Begin Patch — incluir headers *** Update File / *** Add File y hunks @@"),
 		}, "patch"),
 		func(ctx context.Context, args applyPatchArgs) domain.ToolResult {
 			if strings.TrimSpace(args.Patch) == "" {

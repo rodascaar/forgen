@@ -96,6 +96,26 @@ type ExecutionConfig struct {
 	DockerImage string `yaml:"docker_image"`
 }
 
+// CompactionConfig controla el comportamiento de compactación de contexto.
+type CompactionConfig struct {
+	Threshold float64 `yaml:"threshold,omitempty"` // 0.85-0.99, default 0.85
+	Disabled  bool    `yaml:"disabled,omitempty"`
+}
+
+// CompactionThreshold devuelve el umbral efectivo (clamp 0.5-0.99).
+func (c CompactionConfig) CompactionThreshold() float64 {
+	if c.Threshold == 0 {
+		return 0.85
+	}
+	if c.Threshold < 0.5 {
+		return 0.5
+	}
+	if c.Threshold > 0.99 {
+		return 0.99
+	}
+	return c.Threshold
+}
+
 // PermissionConfig es la configuración global de permisos.
 type PermissionConfig struct {
 	Mode  string           `yaml:"mode"` // auto | on_request | never
@@ -108,6 +128,7 @@ type AppConfig struct {
 	Default        DefaultSelection `yaml:"default"`
 	Permissions    PermissionConfig `yaml:"permissions"`
 	Agent          string           `yaml:"agent"`
+	Language       string           `yaml:"language,omitempty"` // es | en, default en
 	MaxIterations  int              `yaml:"max_iterations"`
 	MaxOutputChars int              `yaml:"max_output_chars"`
 	// ReasoningEffort es el nivel de razonamiento por defecto: off|low|medium|high.
@@ -118,6 +139,7 @@ type AppConfig struct {
 	Search          SearchConfig               `yaml:"search,omitempty"`
 	Theme           Theme                      `yaml:"theme,omitempty"`
 	Execution       ExecutionConfig            `yaml:"execution,omitempty"`
+	Compaction      CompactionConfig           `yaml:"compaction,omitempty"`
 }
 
 // DefaultAppConfig devuelve una configuración por defecto usable.
