@@ -2,7 +2,7 @@
 
 BINARY := forgen
 MODULE := github.com/rodascaar/forgen
-VERSION ?= 0.1.13
+VERSION ?= 0.1.14
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X $(MODULE)/internal/app.Version=$(VERSION) -X $(MODULE)/internal/app.Commit=$(COMMIT)
 

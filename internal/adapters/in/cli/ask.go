@@ -22,6 +22,7 @@ type askOptions struct {
 	SessionID      string
 	JSON           bool
 	Prompt         string
+	Reasoning      string
 }
 
 func newAskCommand(app *apppkg.App) *cobra.Command {
@@ -47,6 +48,7 @@ func newAskCommand(app *apppkg.App) *cobra.Command {
 	command.Flags().StringVar(&options.SessionID, "session", "", "ID de sesión a resumir")
 	command.Flags().BoolVar(&options.JSON, "json", false, "Salida JSON estructurada (eventos)")
 	command.Flags().StringVarP(&options.Prompt, "prompt", "m", "", "Prompt a ejecutar")
+	command.Flags().StringVar(&options.Reasoning, "reasoning", "", "Nivel de razonamiento: off|low|medium|high")
 	return command
 }
 
@@ -60,6 +62,9 @@ func runAsk(ctx context.Context, app *apppkg.App, options *askOptions) error {
 	}
 	if options.Agent != "" {
 		appConfig.Agent = options.Agent
+	}
+	if options.Reasoning != "" {
+		appConfig.ReasoningEffort = options.Reasoning
 	}
 
 	// Resolver modelo y provider: override explícito o orquestación multi-modelo.
@@ -87,6 +92,11 @@ func runAsk(ctx context.Context, app *apppkg.App, options *askOptions) error {
 	session, err := loadOrCreateSession(ctx, app, options.SessionID, workspace, model, agentDef.Name)
 	if err != nil {
 		return err
+	}
+	// Fix: si la sesión reanudada trae otro modelo/proveedor, sincronizarla con
+	// el modelo resuelto para que el cambio (--model/--provider) aplique ya.
+	if session.Model.Key() != model.Key() {
+		session.Model = model
 	}
 	defer func() { _ = app.SessionService.Save(ctx, session) }()
 

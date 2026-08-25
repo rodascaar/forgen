@@ -32,13 +32,14 @@ type openAIFunction struct {
 }
 
 type openAIRequest struct {
-	Model         string          `json:"model"`
-	Messages      []openAIMessage `json:"messages"`
-	Tools         []openAITool    `json:"tools,omitempty"`
-	Temperature   float64         `json:"temperature"`
-	MaxTokens     int             `json:"max_tokens"`
-	Stream        bool            `json:"stream"`
-	StreamOptions *streamOptions  `json:"stream_options,omitempty"`
+	Model           string          `json:"model"`
+	Messages        []openAIMessage `json:"messages"`
+	Tools           []openAITool    `json:"tools,omitempty"`
+	Temperature     float64         `json:"temperature"`
+	MaxTokens       int             `json:"max_tokens"`
+	ReasoningEffort string          `json:"reasoning_effort,omitempty"`
+	Stream          bool            `json:"stream"`
+	StreamOptions   *streamOptions  `json:"stream_options,omitempty"`
 }
 
 type streamOptions struct {
@@ -118,13 +119,14 @@ func (o *OpenAICompatible) ListModels(ctx context.Context) ([]string, error) {
 // StreamChat implementa ports.LLMProvider.
 func (o *OpenAICompatible) StreamChat(ctx context.Context, request ports.ChatRequest, handler ports.StreamHandler) error {
 	payload := openAIRequest{
-		Model:         request.Model.ID,
-		Messages:      buildOpenAIMessages(request.Messages),
-		Tools:         buildOpenAITools(request.Tools),
-		Temperature:   request.Temperature,
-		MaxTokens:     request.MaxTokens,
-		Stream:        true,
-		StreamOptions: &streamOptions{IncludeUsage: true},
+		Model:           request.Model.ID,
+		Messages:        buildOpenAIMessages(request.Messages),
+		Tools:           buildOpenAITools(request.Tools),
+		Temperature:     request.Temperature,
+		MaxTokens:       request.MaxTokens,
+		ReasoningEffort: normalizeReasoningEffort(request.ReasoningEffort),
+		Stream:          true,
+		StreamOptions:   &streamOptions{IncludeUsage: true},
 	}
 
 	response, err := postJSON(ctx, o.client, "/chat/completions", payload)

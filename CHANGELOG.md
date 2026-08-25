@@ -4,6 +4,18 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-1.1.0/) y
 el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 
+## [0.1.14] - 2026-08-24
+
+### Añadido
+
+- **Razonamiento por niveles (off|low|medium|high)**: configuración `AppConfig.reasoning_effort`, flag `--reasoning` en `forgen ask` y comando `/reasoning` en la TUI (con indicador en la barra de estado). Se envía `reasoning_effort` en proveedores OpenAI-compatible (DeepSeek/OpenAI/NVIDIA/Qwen) y `thinking.budget_tokens` en Anthropic.
+- **Copiar salida**: `/copy` copia la última respuesta del asistente y `/copy all` todo el transcript al portapapeles (la captura del ratón impedía seleccionar con Cmd+C).
+- **Reanudar sesiones de verdad**: al elegir sesión (`/sessions` o `/resume <id>`) se cargan sus mensajes en el transcript para ver y continuar la conversación.
+
+### Corregido
+
+- **Cambiar de modelo no surtía efecto hasta reiniciar**: el modelo usado por el runner salía de `session.Model` (antiguo) al reanudar; ahora `runAgent`/`runAsk` sincronizan `session.Model` con el modelo resuelto, aplicando el cambio en el mismo turno.
+
 ## [0.1.13] - 2026-08-24
 
 ### Añadido
@@ -152,6 +164,7 @@ el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 - **Validación/listado de modelos con timeout (15s)**: el paso "Validando..." y
   el listado en vivo de `/model` no se quedan colgados si el proveedor tarda.
 
+[0.1.14]: https://github.com/rodascaar/forgen/releases/tag/v0.1.14
 [0.1.13]: https://github.com/rodascaar/forgen/releases/tag/v0.1.13
 [0.1.12]: https://github.com/rodascaar/forgen/releases/tag/v0.1.12
 [0.1.11]: https://github.com/rodascaar/forgen/releases/tag/v0.1.11

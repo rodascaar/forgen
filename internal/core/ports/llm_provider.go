@@ -43,6 +43,9 @@ type ChatRequest struct {
 	Tools       []domain.Tool
 	Temperature float64
 	MaxTokens   int
+	// ReasoningEffort controla el nivel de razonamiento del modelo: "off",
+	// "low", "medium" o "high". Vacío equivale a "off" (no enviar).
+	ReasoningEffort string
 }
 
 // StreamHandler recibe los eventos de streaming del proveedor.

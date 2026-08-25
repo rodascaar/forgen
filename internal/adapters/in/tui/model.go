@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -62,6 +63,7 @@ type Model struct {
 	confirmCh       chan bool
 	agentName       string
 	modelKey        string
+	reasoning       string
 	phase           string
 	sessionID       string
 	workspace       string
@@ -747,6 +749,28 @@ func (m Model) handleSlash(command string) (tea.Model, tea.Cmd) {
 			m.append("notice", "No hay checkpoint para revertir en esta sesión.")
 		}
 		return m, nil
+	case "/reasoning", "/reason":
+		level := ""
+		if len(fields) > 1 {
+			level = strings.ToLower(strings.TrimSpace(fields[1]))
+		}
+		if !validReasoningLevel(level) {
+			m.append("notice", "Nivel inválido. Usa: /reasoning off|low|medium|high")
+			return m, nil
+		}
+		m.reasoning = level
+		m.append("notice", fmt.Sprintf("Razonamiento: %s", m.reasoning))
+		return m, nil
+	case "/copy":
+		return m.handleCopy(fields)
+	case "/resume":
+		if len(fields) > 1 {
+			m.sessionID = fields[1]
+			m.loadSessionIntoTranscript(fields[1])
+			return m, nil
+		}
+		m.append("notice", "Uso: /resume <sessionID>")
+		return m, nil
 	case "/help", "/?":
 		m.helpOpen = true
 		return m, nil
@@ -905,7 +929,7 @@ func (m *Model) applyPickerSelection(selection pickerSelectedMsg) {
 		m.sessionID = selection.value
 		appConfig, _ := m.app.LoadConfig(ctx)
 		m.applyConfig(appConfig)
-		m.append("notice", fmt.Sprintf("Sesión %s cargada. Escribe tu prompt para continuar.", selection.value))
+		m.loadSessionIntoTranscript(selection.value)
 
 	case pickerTaskKind:
 		m.append("notice", fmt.Sprintf("Tarea: %s", selection.value))
@@ -958,7 +982,7 @@ func (m *Model) toggleAgent() {
 // El estado m.running ya se activó en handleKey (este método recibe m por valor).
 func (m Model) startRun(ctx context.Context, prompt string) tea.Cmd {
 	runCommand := func() tea.Msg {
-		return runAgent(ctx, m.app, m.sessionID, m.workspace, m.agentName, prompt, m.program)
+		return runAgent(ctx, m.app, m.sessionID, m.workspace, m.agentName, prompt, m.reasoning, m.program)
 	}
 	ticker := tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg{} })
 	return tea.Batch(runCommand, ticker)
@@ -969,7 +993,7 @@ func (m Model) startRun(ctx context.Context, prompt string) tea.Cmd {
 const runTimeout = 10 * time.Minute
 
 // runAgent ejecuta un turno del agente en segundo plano.
-func runAgent(ctx context.Context, app *apppkg.App, sessionID, workspace, agentName, prompt string,
+func runAgent(ctx context.Context, app *apppkg.App, sessionID, workspace, agentName, prompt, reasoning string,
 	program *tea.Program) tea.Msg {
 	// Red de seguridad anti-cuelgue: hereda la cancelación (Ctrl+C) y añade un
 	// tope global para que runDoneMsg siempre se emita y el spinner se apague.
@@ -992,6 +1016,13 @@ func runAgent(ctx context.Context, app *apppkg.App, sessionID, workspace, agentN
 
 	// Primera ejecución: crear la sesión.
 	session := loadOrCreateSessionTUI(runCtx, app, sessionID, workspace, model, agentDef.Name)
+	// Fix: si la sesión reanudada trae otro modelo/proveedor (p.ej. se cambió con
+	// /model), sincronizarla con el modelo resuelto para que el cambio aplique
+	// en el mismo turno sin necesidad de reiniciar.
+	if session.Model.Key() != model.Key() {
+		session.Model = model
+		_ = app.SessionService.Save(runCtx, session)
+	}
 	// Rollback interno: snapshot previo a un run de build (no read-only).
 	if !agentDef.IsReadOnly {
 		_, _ = app.SnapshotWorkspace(runCtx, workspace, session.ID)
@@ -999,13 +1030,14 @@ func runAgent(ctx context.Context, app *apppkg.App, sessionID, workspace, agentN
 	messenger := newTUIMessenger(program)
 
 	runner, err := app.NewRunner(runCtx, apppkg.RunnerDeps{
-		Provider:  provider,
-		Model:     model,
-		Agent:     agentDef,
-		Messenger: messenger,
-		Responder: messenger,
-		Workspace: workspace,
-		SessionID: session.ID,
+		Provider:        provider,
+		Model:           model,
+		Agent:           agentDef,
+		Messenger:       messenger,
+		Responder:       messenger,
+		Workspace:       workspace,
+		SessionID:       session.ID,
+		ReasoningEffort: reasoning,
 	})
 	if err != nil {
 		return runDoneMsg{err: err}
@@ -1162,6 +1194,10 @@ func (m Model) renderHelp() string {
 		"  /lint       Ejecuta linters",
 		"  /fix        Auto-fix lint/test",
 		"  /pr         Crear PR (gh pr create)",
+		"  /reasoning Nivel de razonamiento: off|low|medium|high",
+		"  /copy      Copia la última respuesta al portapapeles (/copy all)",
+		"  /undo      Revierte la última iteración (checkpoint interno)",
+		"  /resume    Reanuda una sesión por ID",
 		"  /help, /?   Muestra esta ayuda",
 		"  /quit, /exit  Sale de forgen",
 		"",
@@ -1196,6 +1232,9 @@ func (m Model) renderStatus() string {
 	}
 	left += " " + m.styles.accent.Render(prompt)
 	left += " " + m.styles.dim.Render(fmt.Sprintf("modelo:%s", m.modelKey))
+	if m.reasoning != "" && m.reasoning != "off" {
+		left += " " + m.styles.accent.Render(fmt.Sprintf("raz:%s", m.reasoning))
+	}
 	if m.phase != "" {
 		left += " " + m.styles.accent.Render(fmt.Sprintf("fase:%s", m.phase))
 	}
@@ -1253,6 +1292,81 @@ func (m *Model) flushAssistant() {
 
 func (m *Model) append(kind, text string) {
 	m.transcript = append(m.transcript, transcriptLine{kind: kind, text: text})
+}
+
+// validReasoningLevel indica si un nivel de razonamiento es válido.
+func validReasoningLevel(level string) bool {
+	switch level {
+	case "", "off", "low", "medium", "high":
+		return true
+	}
+	return false
+}
+
+// handleCopy copia al portapapeles: la última respuesta del asistente (/copy)
+// o todo el transcript (/copy all).
+func (m *Model) handleCopy(fields []string) (tea.Model, tea.Cmd) {
+	all := len(fields) > 1 && fields[1] == "all"
+	var text string
+	if all {
+		var builder strings.Builder
+		for _, line := range m.transcript {
+			builder.WriteString(line.text)
+			builder.WriteString("\n")
+		}
+		text = strings.TrimRight(builder.String(), "\n")
+	} else {
+		text = m.lastAssistantText()
+	}
+	if text == "" {
+		m.append("notice", "Nada que copiar todavía.")
+		return m, nil
+	}
+	if err := clipboard.WriteAll(text); err != nil {
+		m.append("error", fmt.Sprintf("Error copiando al portapapeles: %v", err))
+		return m, nil
+	}
+	if all {
+		m.append("tool_done", "✓ Transcript copiado al portapapeles.")
+	} else {
+		m.append("tool_done", "✓ Última respuesta copiada al portapapeles.")
+	}
+	return m, nil
+}
+
+// lastAssistantText devuelve la última respuesta de texto del asistente.
+func (m *Model) lastAssistantText() string {
+	if m.assistantBuffer != "" {
+		return m.assistantBuffer
+	}
+	for i := len(m.transcript) - 1; i >= 0; i-- {
+		if m.transcript[i].kind == "assistant" {
+			return m.transcript[i].text
+		}
+	}
+	return ""
+}
+
+// loadSessionIntoTranscript carga los mensajes de una sesión en el transcript
+// para poder ver y continuar una conversación anterior.
+func (m *Model) loadSessionIntoTranscript(sessionID string) {
+	session, err := m.app.SessionService.Resume(context.Background(), sessionID)
+	if err != nil {
+		m.append("error", fmt.Sprintf("Error al resumir sesión: %v", err))
+		return
+	}
+	m.transcript = m.transcript[:0]
+	for _, msg := range session.Messages {
+		switch msg.Role {
+		case domain.RoleUser:
+			m.append("user", msg.Text())
+		case domain.RoleAssistant:
+			if text := msg.Text(); text != "" {
+				m.append("assistant", text)
+			}
+		}
+	}
+	m.append("notice", fmt.Sprintf("Sesión %s cargada. Escribe para continuar.", sessionID))
 }
 
 // isRecommendation indica si una línea del asistente corresponde a la

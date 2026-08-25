@@ -295,13 +295,14 @@ func (a *App) Close() {
 
 // RunnerDeps agrupa las dependencias para construir un Runner.
 type RunnerDeps struct {
-	Provider  ports.LLMProvider
-	Model     domain.Model
-	Agent     domain.Agent
-	Messenger ports.Messenger
-	Responder ports.PermissionResponder
-	Workspace string
-	SessionID string
+	Provider        ports.LLMProvider
+	Model           domain.Model
+	Agent           domain.Agent
+	Messenger       ports.Messenger
+	Responder       ports.PermissionResponder
+	Workspace       string
+	SessionID       string
+	ReasoningEffort string
 }
 
 // NewRunner construye un Runner completo (permisos + contexto + tools).
@@ -345,17 +346,26 @@ func (a *App) NewRunner(ctx context.Context, deps RunnerDeps) (*agent.Runner, er
 	}
 
 	return agent.NewRunner(agent.Options{
-		Provider:      deps.Provider,
-		Tools:         a.ToolRegistry,
-		Decider:       decider,
-		Responder:     deps.Responder,
-		Messenger:     deps.Messenger,
-		Sessions:      a.SessionService,
-		SystemPrompt:  systemPrompt,
-		Usage:         a.UsageService,
-		MaxIterations: appConfig.MaxIterations,
-		Logger:        a.Logger,
+		Provider:        deps.Provider,
+		Tools:           a.ToolRegistry,
+		Decider:         decider,
+		Responder:       deps.Responder,
+		Messenger:       deps.Messenger,
+		Sessions:        a.SessionService,
+		SystemPrompt:    systemPrompt,
+		Usage:           a.UsageService,
+		MaxIterations:   appConfig.MaxIterations,
+		ReasoningEffort: reasoningEffortOr(deps.ReasoningEffort, appConfig.ReasoningEffort),
+		Logger:          a.Logger,
 	})
+}
+
+// reasoningEffortOr prioriza el override (flag/comando) sobre el config.
+func reasoningEffortOr(override, config string) string {
+	if override != "" {
+		return override
+	}
+	return config
 }
 
 // ValidateProviderKey valida una API key contra el proveedor y devuelve los

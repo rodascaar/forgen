@@ -25,16 +25,17 @@ const (
 
 // Runner ejecuta un turno completo del agente: prompt → LLM → tools → observación.
 type Runner struct {
-	provider      ports.LLMProvider
-	tools         ports.ToolExecutor
-	decider       ports.PermissionDecider
-	responder     ports.PermissionResponder
-	messenger     ports.Messenger
-	sessions      *session.Service
-	systemPrompt  func(context.Context) (string, error)
-	usage         ports.UsageRecorder
-	maxIterations int
-	logger        *slog.Logger
+	provider        ports.LLMProvider
+	tools           ports.ToolExecutor
+	decider         ports.PermissionDecider
+	responder       ports.PermissionResponder
+	messenger       ports.Messenger
+	sessions        *session.Service
+	systemPrompt    func(context.Context) (string, error)
+	usage           ports.UsageRecorder
+	maxIterations   int
+	reasoningEffort string
+	logger          *slog.Logger
 }
 
 // RunInput agrupa los datos de entrada de un turno.
@@ -56,16 +57,17 @@ type RunResult struct {
 
 // Options configura el Runner.
 type Options struct {
-	Provider      ports.LLMProvider
-	Tools         ports.ToolExecutor
-	Decider       ports.PermissionDecider
-	Responder     ports.PermissionResponder
-	Messenger     ports.Messenger
-	Sessions      *session.Service
-	SystemPrompt  func(context.Context) (string, error)
-	Usage         ports.UsageRecorder
-	MaxIterations int
-	Logger        *slog.Logger
+	Provider        ports.LLMProvider
+	Tools           ports.ToolExecutor
+	Decider         ports.PermissionDecider
+	Responder       ports.PermissionResponder
+	Messenger       ports.Messenger
+	Sessions        *session.Service
+	SystemPrompt    func(context.Context) (string, error)
+	Usage           ports.UsageRecorder
+	MaxIterations   int
+	ReasoningEffort string
+	Logger          *slog.Logger
 }
 
 // NewRunner construye el Runner validando que no falten dependencias (fail-fast).
@@ -99,16 +101,17 @@ func NewRunner(options Options) (*Runner, error) {
 		maxIterations = 50
 	}
 	return &Runner{
-		provider:      options.Provider,
-		tools:         options.Tools,
-		decider:       options.Decider,
-		responder:     options.Responder,
-		messenger:     options.Messenger,
-		sessions:      options.Sessions,
-		systemPrompt:  options.SystemPrompt,
-		usage:         options.Usage,
-		maxIterations: maxIterations,
-		logger:        options.Logger,
+		provider:        options.Provider,
+		tools:           options.Tools,
+		decider:         options.Decider,
+		responder:       options.Responder,
+		messenger:       options.Messenger,
+		sessions:        options.Sessions,
+		systemPrompt:    options.SystemPrompt,
+		usage:           options.Usage,
+		maxIterations:   maxIterations,
+		reasoningEffort: options.ReasoningEffort,
+		logger:          options.Logger,
 	}, nil
 }
 
@@ -209,11 +212,12 @@ func (r *Runner) callLLM(ctx context.Context, sessionID string, model domain.Mod
 	defer cancel()
 
 	request := ports.ChatRequest{
-		Model:       model,
-		Messages:    messages,
-		Tools:       tools,
-		Temperature: defaultTemperature,
-		MaxTokens:   defaultMaxTokens,
+		Model:           model,
+		Messages:        messages,
+		Tools:           tools,
+		Temperature:     defaultTemperature,
+		MaxTokens:       defaultMaxTokens,
+		ReasoningEffort: r.reasoningEffort,
 	}
 
 	err := r.provider.StreamChat(ctx, request, func(event ports.StreamEvent) error {

@@ -24,6 +24,12 @@ type anthropicRequest struct {
 	Tools       []anthropicTool    `json:"tools,omitempty"`
 	Temperature float64            `json:"temperature"`
 	Stream      bool               `json:"stream"`
+	Thinking    *anthropicThinking `json:"thinking,omitempty"`
+}
+
+type anthropicThinking struct {
+	Type         string `json:"type"` // "enabled"
+	BudgetTokens int    `json:"budget_tokens"`
 }
 
 type anthropicMessage struct {
@@ -114,14 +120,16 @@ func (a *Anthropic) ListModels(ctx context.Context) ([]string, error) {
 // StreamChat implementa ports.LLMProvider.
 func (a *Anthropic) StreamChat(ctx context.Context, request ports.ChatRequest, handler ports.StreamHandler) error {
 	system, messages := buildAnthropicMessages(request.Messages)
+	thinking, maxTokens := anthropicThinkingConfig(request.ReasoningEffort, request.MaxTokens)
 	payload := anthropicRequest{
 		Model:       request.Model.ID,
-		MaxTokens:   request.MaxTokens,
+		MaxTokens:   maxTokens,
 		System:      system,
 		Messages:    messages,
 		Tools:       buildAnthropicTools(request.Tools),
 		Temperature: request.Temperature,
 		Stream:      true,
+		Thinking:    thinking,
 	}
 
 	response, err := a.client.Do(ctx, "POST", "/v1/messages", func() ([]byte, error) {
@@ -143,6 +151,27 @@ func (a *Anthropic) StreamChat(ctx context.Context, request ports.ChatRequest, h
 		return err
 	}
 	return accumulator.finish()
+}
+
+// anthropicThinkingConfig traduce el nivel de razonamiento a un presupuesto de
+// tokens de "thinking" para Anthropic, asegurando que max_tokens quede por
+// encima del presupuesto. Devuelve nil si el razonamiento está desactivado.
+func anthropicThinkingConfig(effort string, maxTokens int) (*anthropicThinking, int) {
+	var budget int
+	switch normalizeReasoningEffort(effort) {
+	case "low":
+		budget = 2048
+	case "medium":
+		budget = 4096
+	case "high":
+		budget = 8192
+	default:
+		return nil, maxTokens
+	}
+	if maxTokens < budget+1024 {
+		maxTokens = budget + 1024
+	}
+	return &anthropicThinking{Type: "enabled", BudgetTokens: budget}, maxTokens
 }
 
 func buildAnthropicTools(tools []domain.Tool) []anthropicTool {

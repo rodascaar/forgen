@@ -104,18 +104,20 @@ type PermissionConfig struct {
 
 // AppConfig es la configuración completa de la aplicación.
 type AppConfig struct {
-	Providers      []ProviderConfig           `yaml:"providers"`
-	Default        DefaultSelection           `yaml:"default"`
-	Permissions    PermissionConfig           `yaml:"permissions"`
-	Agent          string                     `yaml:"agent"`
-	MaxIterations  int                        `yaml:"max_iterations"`
-	MaxOutputChars int                        `yaml:"max_output_chars"`
-	ModelRoles     map[string][]string        `yaml:"model_roles,omitempty"`
-	ModelMetadata  map[string]ModelMetadata   `yaml:"model_metadata,omitempty"`
-	MCPServers     map[string]MCPServerConfig `yaml:"mcp_servers,omitempty"`
-	Search         SearchConfig               `yaml:"search,omitempty"`
-	Theme          Theme                      `yaml:"theme,omitempty"`
-	Execution      ExecutionConfig            `yaml:"execution,omitempty"`
+	Providers      []ProviderConfig `yaml:"providers"`
+	Default        DefaultSelection `yaml:"default"`
+	Permissions    PermissionConfig `yaml:"permissions"`
+	Agent          string           `yaml:"agent"`
+	MaxIterations  int              `yaml:"max_iterations"`
+	MaxOutputChars int              `yaml:"max_output_chars"`
+	// ReasoningEffort es el nivel de razonamiento por defecto: off|low|medium|high.
+	ReasoningEffort string                     `yaml:"reasoning_effort,omitempty"`
+	ModelRoles      map[string][]string        `yaml:"model_roles,omitempty"`
+	ModelMetadata   map[string]ModelMetadata   `yaml:"model_metadata,omitempty"`
+	MCPServers      map[string]MCPServerConfig `yaml:"mcp_servers,omitempty"`
+	Search          SearchConfig               `yaml:"search,omitempty"`
+	Theme           Theme                      `yaml:"theme,omitempty"`
+	Execution       ExecutionConfig            `yaml:"execution,omitempty"`
 }
 
 // DefaultAppConfig devuelve una configuración por defecto usable.
