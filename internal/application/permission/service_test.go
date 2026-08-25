@@ -2,6 +2,7 @@ package permission_test
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/rodascaar/forgen/internal/application/permission"
@@ -93,8 +94,11 @@ func TestSensitiveReadCredentials(t *testing.T) {
 }
 
 func TestOutsideWorkspacePromptsInAuto(t *testing.T) {
-	service := permission.NewService(domain.PermissionModeAuto, "/ws", nil, nil)
-	cases := []string{"../../etc/passwd", "/etc/passwd", "~/secrets/x", "../x.go"}
+	ws := filepath.Join(t.TempDir(), "ws")         // workspace dentro de un temp root
+	outsideAbs := filepath.Join(t.TempDir(), "x.go") // ruta absoluta FUERA del workspace (cross-platform)
+	service := permission.NewService(domain.PermissionModeAuto, ws, nil, nil)
+	// casos fuera del workspace
+	cases := []string{"../../etc/passwd", outsideAbs, "~/secrets/x", "../x.go"}
 	for _, p := range cases {
 		decision, _ := service.Decide(context.Background(), "s1", domain.ToolCall{Name: "read", Arguments: map[string]any{"path": p}})
 		if decision.Allowed {

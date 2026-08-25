@@ -4,6 +4,12 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-1.1.0/) y
 el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 
+## [0.1.20] - 2026-08-25
+
+### Corregido
+
+- **Test `TestOutsideWorkspacePromptsInAuto` fallaba en Windows (CI -race)**: el literal `/etc/passwd` no es ruta absoluta en Windows (`filepath.IsAbs` exige drive letter), así que `Join(ws, "/etc/passwd")` quedaba dentro del workspace y el test fallaba. Ahora el test usa una ruta absoluta real fuera del workspace (`filepath.Join(t.TempDir(), ...)`) cross-platform (`internal/application/permission/service_test.go`).
+
 ## [0.1.19] - 2026-08-25
 
 ### Corregido
