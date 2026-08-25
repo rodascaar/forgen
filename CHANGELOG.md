@@ -4,6 +4,16 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-1.1.0/) y
 el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 
+## [0.1.21] - 2026-08-25
+
+### Añadido
+
+- **Transcript jerárquico (TUI pulido)** — `internal/adapters/in/tui/model.go`:
+  - **Separadores de turno**: línea divisoria `─────` al iniciar cada prompt del usuario y al terminar cada respuesta del asistente, para ver claro dónde empieza/termina cada turno (con guard anti-divisores consecutivos).
+  - **Jerarquía de pasos**: los resultados de herramientas (`✓/✗ tool output`) se muestran **indentados** bajo su tool call (`▶ tool`), agrupando acción + resultado como un paso.
+  - **Colapso de respuestas largas**: respuestas del asistente >500 caracteres se colapsan a un header `▸ Respuesta (N líneas)` y se expanden con `Ctrl+O` (o `Alt+O`), reduciendo el scroll en sesiones largas.
+  - Atajo `Ctrl+O` documentado en `/help`.
+
 ## [0.1.20] - 2026-08-25
 
 ### Corregido

@@ -28,7 +28,14 @@ const modelListTimeout = 15 * time.Second
 type transcriptLine struct {
 	kind string
 	text string
+	// indent es el nivel de anidamiento (0 = raíz, 1+ = sub-paso de tool).
+	indent int
+	// collapsed indica si una respuesta larga se muestra colapsada a un header.
+	collapsed bool
 }
+
+// collapseThresholdChars: respuestas del asistente más largas se colapsan.
+const collapseThresholdChars = 500
 
 // slashHelpText resume los comandos disponibles dentro de la TUI.
 const slashHelpText = `Comandos: /init configura tu proveedor y API key · /help esta ayuda · /quit sale
@@ -377,9 +384,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 	case toolFinishedMsg:
 		if typedMessage.result.OK {
-			m.append("tool_done", fmt.Sprintf("✓ %s %s", typedMessage.call.Name, summarize(typedMessage.result.Output)))
+			m.appendIndent("tool_done", fmt.Sprintf("✓ %s", summarize(typedMessage.result.Output)), 1)
 		} else {
-			m.append("error", fmt.Sprintf("✗ %s: %v", typedMessage.call.Name, typedMessage.result.Error))
+			m.appendIndent("error", fmt.Sprintf("✗ %s: %v", typedMessage.call.Name, typedMessage.result.Error), 1)
 		}
 		return m, nil
 
@@ -402,6 +409,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.running = false
 		m.cancelRequested = false
 		m.scrollOffset = 0
+		// P1: cierra el turno del asistente con separador.
+		m.append("divider", "")
 		return m, nil
 
 	case runDoneMsg:
@@ -421,6 +430,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.running = false
 		m.cancelRequested = false
 		m.scrollOffset = 0
+		// P3: colapsa respuestas largas para reducir scroll.
+		m.maybeCollapseLastAssistant()
+		// P1: cierra el turno del asistente con separador.
+		m.append("divider", "")
 		return m, nil
 
 	case confirmRequestMsg:
@@ -575,6 +588,14 @@ func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch message.String() {
+	case "ctrl+o", "alt+o":
+		// P3: expandir/colapsar la última respuesta del asistente.
+		m.quitArmed = false
+		if !m.running {
+			m.toggleLastAssistantColapse()
+		}
+		return m, nil
+
 	case "ctrl+c", "alt+c":
 		if m.running {
 			// Cancelación idempotente: se pide una sola vez y no se acumulan
@@ -639,6 +660,8 @@ func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.append("notice", "Configura un proveedor primero: escribe /init")
 			return m, nil
 		}
+		// P1: separador de turno — marca el inicio de un nuevo turno del usuario.
+		m.append("divider", "")
 		m.append("user", prompt)
 		// Activar el estado de ejecución AQUÍ: startRun recibe m por valor,
 		// así que cualquier mutación interna se descarta. Sin esto el spinner,
@@ -1243,26 +1266,78 @@ func (m Model) wrappedLines() []string {
 	}
 	var lines []string
 	for _, line := range m.transcript {
+		if line.kind == "divider" {
+			lines = append(lines, m.renderDivider())
+			continue
+		}
 		if line.kind == "assistant" && isRecommendation(line.text) {
 			// La recomendación del plan se resalta en el color de marca.
 			lines = append(lines, strings.Split(m.styles.brand.Render(line.text), "\n")...)
 			continue
 		}
-		lines = append(lines, m.wrap(width, line.kind, line.text)...)
+		if line.kind == "assistant" && line.collapsed {
+			// P3: respuesta larga colapsada a un header expandible.
+			lines = append(lines, m.wrap(width, "assistant", collapseHeader(line.text), line.indent)...)
+			continue
+		}
+		lines = append(lines, m.wrap(width, line.kind, line.text, line.indent)...)
 	}
 	if m.assistantBuffer != "" {
-		lines = append(lines, m.wrap(width, "assistant", m.assistantBuffer)...)
+		lines = append(lines, m.wrap(width, "assistant", m.assistantBuffer, 0)...)
 	}
 	return lines
 }
 
-func (m Model) wrap(width int, kind, text string) []string {
+func (m Model) renderDivider() string {
+	width := m.width
+	if width <= 0 {
+		width = 80
+	}
+	return m.styles.dim.Render(strings.Repeat("─", max(2, width-2)))
+}
+
+// collapseHeader resume una respuesta larga en una línea expandible.
+func collapseHeader(text string) string {
+	n := strings.Count(text, "\n") + 1
+	if n <= 1 {
+		n = len(text) / 80
+	}
+	return fmt.Sprintf("▸ Respuesta (%d líneas) — Ctrl+O expandir/colapsar", max(n, 1))
+}
+
+// maybeCollapseLastAssistant colapsa la última respuesta del asistente si es larga.
+func (m *Model) maybeCollapseLastAssistant() {
+	for i := len(m.transcript) - 1; i >= 0; i-- {
+		if m.transcript[i].kind == "assistant" && len(m.transcript[i].text) > collapseThresholdChars {
+			m.transcript[i].collapsed = true
+			return
+		}
+	}
+}
+
+// toggleLastAssistantColapse alterna colapso de la respuesta más reciente (Ctrl+O).
+func (m *Model) toggleLastAssistantColapse() {
+	for i := len(m.transcript) - 1; i >= 0; i-- {
+		if m.transcript[i].kind == "assistant" {
+			m.transcript[i].collapsed = !m.transcript[i].collapsed
+			return
+		}
+	}
+}
+
+func (m Model) wrap(width int, kind, text string, indent int) []string {
 	if kind == "logo" {
 		// El logotipo se pinta en el color de marca sin ajuste de línea.
 		return m.renderLogoLines()
 	}
-	styled := m.styles.forKind(kind).MaxWidth(width).Render(text)
-	return strings.Split(styled, "\n")
+	padding := strings.Repeat("  ", indent)
+	styled := m.styles.forKind(kind).MaxWidth(width - len(padding)).Render(text)
+	wrapped := strings.Split(styled, "\n")
+	out := make([]string, len(wrapped))
+	for i, ln := range wrapped {
+		out[i] = padding + ln
+	}
+	return out
 }
 
 // renderLogoLines devuelve el logotipo FORGEN, cada línea con su propio color
@@ -1315,6 +1390,7 @@ func (m Model) renderHelp() string {
 		"  PgUp / PgDn  Desplazan la conversación",
 		"  Rueda ratón  Desplaza la conversación (trackpad también)",
 		"  Ctrl+C       Cancela la petición en curso · pulsar 2× para salir",
+		"  Ctrl+O       Expande/colapsa la última respuesta larga del asistente",
 		"  Esc          Cierra overlays / cancela salida",
 		"",
 		"Ver también: /todo (plan), /mcp (servidores), /help (esta ayuda).",
@@ -1399,7 +1475,15 @@ func (m *Model) flushAssistant() {
 }
 
 func (m *Model) append(kind, text string) {
-	m.transcript = append(m.transcript, transcriptLine{kind: kind, text: text})
+	m.appendIndent(kind, text, 0)
+}
+
+// appendIndent añade una línea con nivel de indentación (0 = raíz).
+func (m *Model) appendIndent(kind, text string, indent int) {
+	if kind == "divider" && len(m.transcript) > 0 && m.transcript[len(m.transcript)-1].kind == "divider" {
+		return // evita divisores consecutivos
+	}
+	m.transcript = append(m.transcript, transcriptLine{kind: kind, text: text, indent: indent})
 }
 
 // validReasoningLevel indica si un nivel de razonamiento es válido.

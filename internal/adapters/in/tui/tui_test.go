@@ -191,6 +191,41 @@ func TestMouseWheelScroll(t *testing.T) {
 
 // --- Recomendación del modo plan ---
 
+func TestCollapseHeaderAndToggle(t *testing.T) {
+	m := Model{transcript: []transcriptLine{
+		{kind: "user", text: "hi"},
+		{kind: "assistant", text: strings.Repeat("a ", 600)}, // >500 chars → colapsable
+	}}
+	m.maybeCollapseLastAssistant()
+	if len(m.transcript) != 2 || !m.transcript[1].collapsed {
+		t.Fatal("la respuesta larga debería colapsarse")
+	}
+	// toggle expande
+	m.toggleLastAssistantColapse()
+	if m.transcript[1].collapsed {
+		t.Fatal("toggle debería expandir la respuesta")
+	}
+	// header resume líneas
+	if !strings.Contains(collapseHeader("x\n\ny"), "líneas") {
+		t.Fatal("collapseHeader debería indicar el número de líneas")
+	}
+	// respuesta corta NO se colapsa
+	m2 := Model{transcript: []transcriptLine{{kind: "assistant", text: "corto"}}}
+	m2.maybeCollapseLastAssistant()
+	if len(m2.transcript) == 1 && m2.transcript[0].collapsed {
+		t.Fatal("respuesta corta no debería colapsarse")
+	}
+}
+
+func TestDividerConsecutiveGuard(t *testing.T) {
+	m := Model{}
+	m.append("divider", "")
+	m.append("divider", "")
+	if len(m.transcript) != 1 {
+		t.Fatalf("divisores consecutivos deberían deduplicarse, got %d", len(m.transcript))
+	}
+}
+
 func TestIsRecommendation(t *testing.T) {
 	positive := []string{
 		"✅ Recomendación: Opción B",
