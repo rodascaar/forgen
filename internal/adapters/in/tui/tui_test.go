@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/rodascaar/forgen/internal/core/domain"
 )
@@ -186,6 +187,143 @@ func TestMouseWheelScroll(t *testing.T) {
 	mm2 := down.(Model)
 	if mm2.scrollOffset != 0 {
 		t.Fatalf("scrollOffset=%d tras wheel down, quiero 0", mm2.scrollOffset)
+	}
+}
+
+// --- Layout: el input siempre debe quedar visible al fondo, sin que el log lo tape ---
+
+func TestViewKeepsInputVisibleAtBottom(t *testing.T) {
+	input := textinput.New()
+	input.Prompt = "❯ "
+	input.Width = 76
+	m := Model{styles: newStyles(domain.DefaultTheme()), width: 80, height: 24, input: input}
+	m.transcript = manyLines(80) // transcript largo como tras una tarea con mucho log
+	view := m.View()
+	lines := strings.Split(view, "\n")
+	if got := len(lines); got > m.height {
+		t.Fatalf("View renderizó %d líneas, supera el alto %d", got, m.height)
+	}
+	// El prompt del input "❯" debe estar presente (campo visible).
+	found := false
+	index := -1
+	for i, l := range lines {
+		if strings.Contains(l, "❯") {
+			found = true
+			index = i
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("el prompt del input no aparece en el View (input tapado):\n%s", view)
+	}
+	// Debe estar en las últimas filas, no enterrado por el log.
+	if index < len(lines)-4 {
+		t.Fatalf("el input aparece en la fila %d, debería estar al fondo (len=%d):\n%s", index, len(lines), view)
+	}
+}
+
+// --- Reutilizar prompt fallido (/retry + flecha arriba) ---
+
+func TestRetryReinjectsLastPrompt(t *testing.T) {
+	input := textinput.New()
+	input.SetValue("arregla el bug")
+	m := Model{styles: newStyles(domain.DefaultTheme()), width: 80, height: 24, input: input}
+
+	// Simular Enter: se captura lastPrompt antes de limpiar y se lanza el run.
+	upd, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = upd.(Model)
+	if m.lastPrompt != "arregla el bug" {
+		t.Fatalf("lastPrompt=%q, quiero 'arregla el bug'", m.lastPrompt)
+	}
+	if cmd == nil {
+		t.Fatal("Enter debería lanzar el run del agente")
+	}
+
+	// Flecha arriba con el campo vacío recupera el prompt para editarlo.
+	m.running = false
+	m.input.SetValue("")
+	upd, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyUp})
+	m = upd.(Model)
+	if m.input.Value() != "arregla el bug" {
+		t.Fatalf("tras ↑ el input=%q, quiero 'arregla el bug'", m.input.Value())
+	}
+}
+
+func TestRetryNoPromptShowsNotice(t *testing.T) {
+	m := Model{styles: newStyles(domain.DefaultTheme()), width: 80, height: 24}
+	upd, _ := m.handleSlash("/retry")
+	m = upd.(Model)
+	if m.lastPrompt != "" || m.running {
+		t.Fatalf("/retry sin prompt no debería lanzar nada: running=%v", m.running)
+	}
+}
+
+// --- Overlay de orquestación (/orchestration) ---
+
+func TestOrchestrationOverlayToggle(t *testing.T) {
+	m := Model{styles: newStyles(domain.DefaultTheme()), width: 80, height: 24}
+	m.showOrch = true
+	m.orchModels = []string{"openai/gpt-5", "openai/gpt-5-mini"}
+	m.orchPool = map[string]bool{}
+
+	// Enter en la fila 0 alterna Auto.
+	upd, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = upd.(Model)
+	if !m.orchAuto {
+		t.Fatal("Enter en fila 0 debería activar Auto")
+	}
+
+	// Bajar a un modelo y marcarlo con espacio.
+	upd, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyDown})
+	m = upd.(Model)
+	upd, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" ")})
+	m = upd.(Model)
+	if !m.orchPool["openai/gpt-5"] {
+		t.Fatalf("espacio debería marcar el modelo del pool, pool=%v", m.orchPool)
+	}
+
+	// q cierra el overlay.
+	upd, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	m = upd.(Model)
+	if m.showOrch {
+		t.Fatal("q debería cerrar el overlay de orquestación")
+	}
+}
+
+// --- Wizard de búsqueda (/search) ---
+
+func TestSearchWizardNavigation(t *testing.T) {
+	styles := newStyles(domain.DefaultTheme())
+	w := newSearchModel(nil, styles, 80)
+
+	// Default: selecciona brave (cursor 0).
+	if w.providers[w.cursor] != "brave" {
+		t.Fatalf("cursor inicial debería apuntar a brave, got %q", w.providers[w.cursor])
+	}
+
+	// Enter en "brave" pasa a la etapa de la API key.
+	w, _ = w.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if w.stage != searchEnterKey {
+		t.Fatalf("tras Enter con brave, stage=%d, quiero searchEnterKey", w.stage)
+	}
+	if !w.key.Focused() {
+		t.Fatal("el campo de la API key debería estar enfocado")
+	}
+
+	// Esc vuelve a la selección de proveedor.
+	w, _ = w.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	if w.stage != searchPickProvider {
+		t.Fatalf("tras Esc, stage=%d, quiero searchPickProvider", w.stage)
+	}
+
+	// Seleccionar "off" (sin guardar, sin app).
+	w, _ = w.handleKey(tea.KeyMsg{Type: tea.KeyDown})
+	if w.providers[w.cursor] != "off" {
+		t.Fatalf("cursor debería estar en off, got %q", w.providers[w.cursor])
+	}
+	_, cmd := w.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatal("off no debería lanzar comando de fin si el guardado es síncrono con app nil")
 	}
 }
 

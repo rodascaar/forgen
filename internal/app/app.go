@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/rodascaar/forgen/internal/adapters/out/credentials"
-	"github.com/rodascaar/forgen/internal/application/memory"
 	"github.com/rodascaar/forgen/internal/adapters/out/exec"
 	"github.com/rodascaar/forgen/internal/adapters/out/fs"
 	gitadapter "github.com/rodascaar/forgen/internal/adapters/out/git"
@@ -30,8 +29,10 @@ import (
 	"github.com/rodascaar/forgen/internal/application/ferment"
 	"github.com/rodascaar/forgen/internal/application/lsp"
 	"github.com/rodascaar/forgen/internal/application/mcp"
+	"github.com/rodascaar/forgen/internal/application/memory"
 	"github.com/rodascaar/forgen/internal/application/orchestration"
 	"github.com/rodascaar/forgen/internal/application/permission"
+	appplan "github.com/rodascaar/forgen/internal/application/plan"
 	"github.com/rodascaar/forgen/internal/application/session"
 	"github.com/rodascaar/forgen/internal/application/skills"
 	apptask "github.com/rodascaar/forgen/internal/application/task"
@@ -41,7 +42,6 @@ import (
 	"github.com/rodascaar/forgen/internal/application/web"
 	"github.com/rodascaar/forgen/internal/core/domain"
 	"github.com/rodascaar/forgen/internal/core/ports"
-	appplan "github.com/rodascaar/forgen/internal/application/plan"
 )
 
 // App es el composition root: construye el grafo de dependencias con DI manual.
@@ -242,7 +242,7 @@ func NewApp(logger *slog.Logger) (*App, error) {
 
 	// Herramientas web (fetch siempre; search según config).
 	registry.Register(web.NewWebFetchTool())
-	registry.Register(web.NewWebSearchTool(buildSearchProvider(appConfig, logger)))
+	registry.Register(web.NewWebSearchTool(buildSearchProvider(appConfig, credentialStore, logger)))
 
 	// Arrancar servidores MCP (no fatal si alguno falla).
 	mcpManager := mcp.NewManager(registry, logger)
@@ -548,6 +548,37 @@ func (a *App) ListModelsFor(ctx context.Context, config domain.ProviderConfig) [
 	return models
 }
 
+// SetOrchestration persiste el estado del routing automático multi-modelo y el
+// pool de modelos elegido. Un pool vacío significa "todos los del proveedor".
+func (a *App) SetOrchestration(ctx context.Context, auto bool, pool []string) error {
+	config, err := a.ConfigService.Load(ctx)
+	if err != nil {
+		return err
+	}
+	config.Orchestration.Auto = auto
+	if pool != nil {
+		config.Orchestration.Pool = pool
+	}
+	if err := config.Validate(); err != nil {
+		return err
+	}
+	return a.ConfigService.Save(ctx, config)
+}
+
+// OrchestrationModels devuelve los modelos disponibles del proveedor por
+// defecto (listado en vivo con la key guardada; fallback a la config).
+func (a *App) OrchestrationModels(ctx context.Context) []string {
+	config, err := a.ConfigService.Load(ctx)
+	if err != nil {
+		return nil
+	}
+	provider, ok := config.FindProvider(config.Default.Provider)
+	if !ok {
+		return nil
+	}
+	return a.ListModelsFor(ctx, provider)
+}
+
 // ResolveProvider crea el provider para el modelo configurado.
 func (a *App) ResolveProvider(config domain.AppConfig, model domain.Model) (ports.LLMProvider, error) {
 	providerConfig, ok := config.FindProvider(model.Provider)
@@ -565,6 +596,13 @@ func (a *App) ResolveProvider(config domain.AppConfig, model domain.Model) (port
 // proveedor. El secreto vive separado de la metadata (config.yaml).
 func ProviderCredentialKey(name string) string {
 	return "providers/" + name
+}
+
+// SearchCredentialKey devuelve la clave del almacén de credenciales para el
+// proveedor de búsqueda web (Brave). Al igual que las API keys de los LLM,
+// el secreto se guarda en el credential store y se lee en runtime.
+func SearchCredentialKey(provider string) string {
+	return "search/" + provider
 }
 
 // providerAPIKey resuelve la API key de un proveedor: primero el almacén seguro
@@ -734,10 +772,21 @@ func (a *App) activeFermentBlock(ctx context.Context) string {
 }
 
 // buildSearchProvider construye el proveedor de búsqueda según la config.
-func buildSearchProvider(config domain.AppConfig, logger *slog.Logger) ports.SearchProvider {
+// La API key se resuelve primero desde el CredentialStore (SearchCredentialKey)
+// y luego desde la variable de entorno configurada (fallback para CI).
+func buildSearchProvider(config domain.AppConfig, credentials ports.CredentialStore, logger *slog.Logger) ports.SearchProvider {
 	switch config.Search.Provider {
 	case "brave":
-		return search.NewBraveSearch(os.Getenv(config.Search.APIKeyEnv))
+		key := ""
+		if credentials != nil {
+			if secret, err := credentials.Get(context.Background(), SearchCredentialKey("brave")); err == nil && secret != "" {
+				key = secret
+			}
+		}
+		if key == "" {
+			key = os.Getenv(config.Search.APIKeyEnv)
+		}
+		return search.NewBraveSearch(key)
 	default:
 		logger.Debug("búsqueda web deshabilitada (sin search.provider)")
 		return nil

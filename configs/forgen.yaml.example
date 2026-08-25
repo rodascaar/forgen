@@ -44,6 +44,16 @@ model_metadata:
   anthropic/claude-sonnet-4-5: { tier: heavy }
   openai/gpt-5-mini: { tier: light }
 
+# Routing automático multi-modelo con UNA API key (opcional).
+# Actívalo con /orchestration en la TUI, o aquí:
+#   auto: true  → el orquestador elige entre los modelos del proveedor por
+#                 defecto según fase/complejidad (tier inferido por nombre).
+#   pool: [...] → limita el pool; vacío = todos los modelos del proveedor.
+# Si auto: false, se usa un único modelo (el default). Seguro con 1 solo modelo.
+# orchestration:
+#   auto: true
+#   pool: ["openai/gpt-5", "openai/gpt-5-mini"]
+
 # Servidores MCP (opcional).
 mcp_servers:
   filesystem:
@@ -56,6 +66,8 @@ mcp_servers:
   #   args: ["-y", "mcp-server-tree-sitter", "--workspace", "."]
 
 # Búsqueda web (opcional).
+# Actívala con el comando /search en la TUI o: forgen config set search.apikey <TU_KEY>
+# (la key se guarda en el almacén seguro de credenciales, no en este archivo).
 search:
   provider: brave
   api_key_env: BRAVE_API_KEY

@@ -64,6 +64,18 @@ type SearchConfig struct {
 	APIKeyEnv string `yaml:"api_key_env"`
 }
 
+// OrchestrationConfig controla el routing automático multi-modelo.
+// Con una sola API key (un proveedor), el orquestador puede elegir entre los
+// modelos disponibles del proveedor según la fase y la complejidad.
+type OrchestrationConfig struct {
+	// Auto habilita el routing entre los modelos del proveedor por defecto.
+	// Si es false, se usa un único modelo (el default), igual que siempre.
+	Auto bool `yaml:"auto"`
+	// Pool limita los modelos usados (formato "provider/model"). Vacío =
+	// usar todos los modelos disponibles del proveedor por defecto.
+	Pool []string `yaml:"pool,omitempty"`
+}
+
 // Theme define la paleta de colores de la interfaz.
 type Theme struct {
 	User      string `yaml:"user"`
@@ -137,6 +149,7 @@ type AppConfig struct {
 	ModelMetadata   map[string]ModelMetadata   `yaml:"model_metadata,omitempty"`
 	MCPServers      map[string]MCPServerConfig `yaml:"mcp_servers,omitempty"`
 	Search          SearchConfig               `yaml:"search,omitempty"`
+	Orchestration   OrchestrationConfig        `yaml:"orchestration,omitempty"`
 	Theme           Theme                      `yaml:"theme,omitempty"`
 	Execution       ExecutionConfig            `yaml:"execution,omitempty"`
 	Compaction      CompactionConfig           `yaml:"compaction,omitempty"`

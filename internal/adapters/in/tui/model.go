@@ -38,7 +38,7 @@ type transcriptLine struct {
 const collapseThresholdChars = 500
 
 // slashHelpText resume los comandos disponibles dentro de la TUI.
-const slashHelpText = `Comandos: /init configura tu proveedor y API key · /help esta ayuda · /quit sale
+const slashHelpText = `Comandos: /init configura tu proveedor y API key · /search activa la búsqueda web (Brave) · /help esta ayuda · /quit sale
 Atajos: Enter envía · Tab cambia agente · PgUp/PgDn o rueda del ratón desplazan · Ctrl+C cancela / salir (2×) · /todo /mcp /help`
 
 // grsprkLogo es la identidad ASCII de forgen (fuente block de go-figure, solo
@@ -80,6 +80,11 @@ type Model struct {
 	todoCursor      int
 	showMCP         bool
 	mcpCursor       int
+	showOrch        bool
+	orchAuto        bool
+	orchCursor      int
+	orchModels      []string
+	orchPool        map[string]bool
 	width           int
 	height          int
 	quitting        bool
@@ -88,9 +93,11 @@ type Model struct {
 	noConfig        bool
 	scrollOffset    int
 	wizard          *wizardModel
+	search          *searchModel
 	picker          *pickerModel
 	helpOpen        bool
 	quitArmed       bool
+	lastPrompt      string
 }
 
 // Run inicia la TUI en modo pantalla alternativa.
@@ -304,6 +311,95 @@ func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && (s[0:len(substr)] == substr || contains(s[1:], substr)))
 }
 
+// openOrchestrationOverlay abre el overlay de routing multi-modelo: muestra el
+// estado de Auto y los modelos disponibles del proveedor por defecto (listado
+// en vivo), con los del pool preseleccionados.
+func (m *Model) openOrchestrationOverlay() {
+	ctx := context.Background()
+	m.orchAuto = false
+	m.orchPool = map[string]bool{}
+	appConfig, err := m.app.LoadConfig(ctx)
+	if err != nil {
+		m.append("error", fmt.Sprintf("Error: %v", err))
+		return
+	}
+	m.orchAuto = appConfig.Orchestration.Auto
+	for _, key := range appConfig.Orchestration.Pool {
+		if key != "" {
+			m.orchPool[key] = true
+		}
+	}
+	m.orchModels = m.app.OrchestrationModels(ctx)
+	m.orchCursor = 0
+	m.showOrch = true
+}
+
+// toggleOrchModel marca/desmarca un modelo en el pool y persiste. Un pool vacío
+// significa "usar todos los modelos del proveedor".
+func (m *Model) toggleOrchModel(model string) {
+	if m.orchPool[model] {
+		delete(m.orchPool, model)
+	} else {
+		m.orchPool[model] = true
+	}
+	m.persistOrchestration()
+}
+
+// persistOrchestration guarda el estado actual (Auto + pool) en la config.
+func (m *Model) persistOrchestration() {
+	if m.app == nil {
+		return
+	}
+	pool := make([]string, 0, len(m.orchPool))
+	for key := range m.orchPool {
+		pool = append(pool, key)
+	}
+	sortStrings(pool)
+	if err := m.app.SetOrchestration(context.Background(), m.orchAuto, pool); err != nil {
+		m.append("error", fmt.Sprintf("Error guardando orquestación: %v", err))
+	}
+}
+
+// renderOrchestrationOverlay dibuja el overlay de routing multi-modelo.
+func (m Model) renderOrchestrationOverlay() string {
+	var b strings.Builder
+	b.WriteString(m.styles.accent.Render("Orquestación multi-modelo (una API key)") + "\n\n")
+
+	autoRow := "  [OFF]"
+	if m.orchAuto {
+		autoRow = "  [ON] "
+	}
+	if m.orchCursor == 0 {
+		autoRow = m.styles.accent.Render("▸" + autoRow)
+	}
+	autoRow += "  " + m.styles.dim.Render("Routing automático: elegir modelo por fase/complejidad")
+	b.WriteString(autoRow + "\n\n")
+
+	if len(m.orchModels) == 0 {
+		b.WriteString(m.styles.dim.Render("(sin modelos disponibles — configura un proveedor con /init)"))
+	} else {
+		all := len(m.orchPool) == 0 && m.orchAuto
+		b.WriteString(m.styles.dim.Render("Modelos del proveedor (Espacio marca el pool · Enter alterna auto):") + "\n")
+		for i, model := range m.orchModels {
+			selected := m.orchPool[model]
+			box := "[ ]"
+			if selected || all {
+				box = "[x]"
+			}
+			row := fmt.Sprintf("  %s %s", box, model)
+			if i+1 == m.orchCursor {
+				row = m.styles.accent.Render("▸" + box + " " + model)
+			}
+			b.WriteString(row + "\n")
+		}
+		if all {
+			b.WriteString("\n" + m.styles.notice.Render("Modo 'todos': usa todos los modelos del proveedor (pool vacío)."))
+		}
+	}
+	b.WriteString("\n\n" + m.styles.dim.Render("(↑/↓ mover · Enter/Espacio marcar · q/Esc cerrar y guardar)"))
+	return b.String()
+}
+
 // Init implementa tea.Model. El setup (incluido el foco del input) se hace en
 // newModel para que persista; Init solo arranca el parpadeo del cursor.
 func (m Model) Init() tea.Cmd {
@@ -345,10 +441,18 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.picker.setModels(typedMessage.models)
 		}
 		return m, nil
+
+	case searchDoneMsg, searchCancelMsg:
+		m.search = nil
+		return m, nil
 	}
 
 	// Mientras un sub-modelo está activo, delegamos el resto de mensajes
-	// (teclado, resize, resultado de validación).
+	if m.search != nil {
+		var cmd tea.Cmd
+		m.search, cmd = m.search.Update(message)
+		return m, cmd
+	}
 	if m.wizard != nil {
 		var cmd tea.Cmd
 		m.wizard, cmd = m.wizard.Update(message)
@@ -467,7 +571,7 @@ func (m *Model) resetConfirm() {
 // handleMouse desplaza el transcript con la rueda del ratón / trackpad.
 func (m Model) handleMouse(message tea.MouseMsg) (tea.Model, tea.Cmd) {
 	// La rueda solo aplica en la vista principal (no en overlays).
-	if m.showTodo || m.showMCP || m.helpOpen || m.wizard != nil || m.picker != nil {
+	if m.showTodo || m.showMCP || m.showOrch || m.helpOpen || m.wizard != nil || m.picker != nil {
 		return m, nil
 	}
 	switch message.Button {
@@ -488,7 +592,7 @@ func (m *Model) scrollBy(delta int) {
 	if m.scrollOffset < 0 {
 		m.scrollOffset = 0
 	}
-	limit := m.height - 4
+	limit := m.height - 5
 	if limit < 5 {
 		limit = 5
 	}
@@ -502,6 +606,37 @@ func (m *Model) scrollBy(delta int) {
 }
 
 func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Overlay de orquestación: fila 0 = routing automático (Enter alterna),
+	// filas 1..N = modelos del proveedor (Espacio/x marca para el pool).
+	if m.showOrch {
+		switch message.String() {
+		case "esc", "q", "ctrl+c":
+			m.showOrch = false
+			m.quitArmed = false
+		case "up", "k":
+			if m.orchCursor > 0 {
+				m.orchCursor--
+			}
+		case "down", "j":
+			if m.orchCursor < len(m.orchModels) {
+				m.orchCursor++
+			}
+		case "enter":
+			m.quitArmed = false
+			if m.orchCursor == 0 {
+				m.orchAuto = !m.orchAuto
+				m.persistOrchestration()
+			} else {
+				m.toggleOrchModel(m.orchModels[m.orchCursor-1])
+			}
+		case " ", "x":
+			m.quitArmed = false
+			if m.orchCursor > 0 {
+				m.toggleOrchModel(m.orchModels[m.orchCursor-1])
+			}
+		}
+		return m, nil
+	}
 	// Overlay de MCP: navegación simple — cuchara: solo cierres estándar
 	if m.showMCP {
 		switch message.String() {
@@ -651,6 +786,12 @@ func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if prompt == "" || m.running {
 			return m, nil
 		}
+		// Guardar el último prompt enviado para poder reinyectarlo con /retry
+		// o Flecha-Arriba si la petición falla (equivalente a "revert + reintentar"
+		// de opencode/claude/codex). Los comandos slash no cuentan como prompt.
+		if !strings.HasPrefix(prompt, "/") {
+			m.lastPrompt = prompt
+		}
 		m.input.SetValue("")
 		// Comandos tipo slash (/init, /help, /quit).
 		if strings.HasPrefix(prompt, "/") {
@@ -674,6 +815,17 @@ func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cancelRun = cancel
 		return m, m.startRun(ctx, prompt)
 
+	case "up":
+		m.quitArmed = false
+		// Reinyectar el último prompt para editarlo o reintentarlo cuando el
+		// campo está vacío (estilo opencode: recuperar la petición anterior).
+		if m.input.Value() == "" && m.lastPrompt != "" && !m.running {
+			m.input.SetValue(m.lastPrompt)
+			m.input.CursorEnd()
+			m.append("notice", "Último prompt recuperado — edítalo o pulsa Enter para reintentar")
+		}
+		return m, nil
+
 	default:
 		// Cualquier tecla no reconocida como atajo desarma el quit y cae al input.
 		// Letras como q/p/m/? ahora escriben sin abrir menús — principio cuchara.
@@ -695,6 +847,9 @@ func (m Model) handleSlash(command string) (tea.Model, tea.Cmd) {
 	case "/init":
 		m.wizard = newWizardModel(m.app, m.styles, m.width)
 		return m, m.wizard.Init()
+	case "/search":
+		m.search = newSearchModel(m.app, m.styles, m.width)
+		return m, m.search.Init()
 	case "/provider":
 		return m.openProviderPicker()
 	case "/model":
@@ -704,6 +859,24 @@ func (m Model) handleSlash(command string) (tea.Model, tea.Cmd) {
 	case "/new":
 		m.startNewSession()
 		return m, nil
+	case "/retry":
+		if m.lastPrompt == "" {
+			m.append("notice", "No hay un prompt anterior para reintentar.")
+			return m, nil
+		}
+		if m.running {
+			return m, nil
+		}
+		// Estilo opencode: /undo revierte los cambios de la última iteración y
+		// /retry reinyecta el mismo prompt para intentarlo de nuevo.
+		m.append("divider", "")
+		m.append("user", m.lastPrompt)
+		m.running = true
+		m.assistantBuffer = ""
+		m.cancelRequested = false
+		ctx, cancel := context.WithCancel(context.Background())
+		m.cancelRun = cancel
+		return m, m.startRun(ctx, m.lastPrompt)
 	case "/todo", "/plan":
 		m.loadTodoList()
 		m.todoCursor = 0
@@ -714,6 +887,9 @@ func (m Model) handleSlash(command string) (tea.Model, tea.Cmd) {
 	case "/mcp":
 		m.mcpCursor = 0
 		m.showMCP = true
+		return m, nil
+	case "/orchestration", "/orch":
+		m.openOrchestrationOverlay()
 		return m, nil
 	case "/diff":
 		diff, _ := m.app.Git.Diff(context.Background(), ".", false)
@@ -792,6 +968,31 @@ func (m Model) handleSlash(command string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.append("notice", compactContextLine(sess, m.app))
+		return m, nil
+	case "/trace":
+		// Diagnóstico: qué modelo se resolvería para la próxima petición, tamaño
+		// del contexto y tools disponibles. Ayuda a ver si se está usando un modelo
+		// más pesado o un contexto inflado (lentitud percibida).
+		appConfig, _ := m.app.LoadConfig(context.Background())
+		model, _, phase, err := m.app.ResolveRunModel(context.Background(), "diagnóstico", "", "")
+		lines := []string{fmt.Sprintf("Agente: %s · fase (clasificada): %s", m.agentName, phase)}
+		if err != nil {
+			lines = append(lines, "Modelo resuelto: error ("+err.Error()+")")
+		} else {
+			lines = append(lines, "Modelo resuelto: "+model.Key())
+		}
+		if appConfig.Default.Provider != "" {
+			lines = append(lines, fmt.Sprintf("Modelo por defecto: %s/%s", appConfig.Default.Provider, appConfig.Default.Model))
+		}
+		if m.app.ToolRegistry != nil {
+			lines = append(lines, fmt.Sprintf("Tools registradas: %d", len(m.app.ToolRegistry.ListTools())))
+		}
+		if m.sessionID != "" {
+			if sess, err := m.app.SessionService.Resume(context.Background(), m.sessionID); err == nil {
+				lines = append(lines, compactContextLine(sess, m.app))
+			}
+		}
+		m.append("notice", strings.Join(lines, "\n"))
 		return m, nil
 	case "/undo":
 		if m.sessionID == "" {
@@ -1208,11 +1409,17 @@ func (m Model) View() string {
 	if m.wizard != nil {
 		return m.wizard.View()
 	}
+	if m.search != nil {
+		return m.search.View()
+	}
 	if m.picker != nil {
 		return m.picker.View()
 	}
 	if m.showMCP {
 		return m.renderMCPOverlay()
+	}
+	if m.showOrch {
+		return m.renderOrchestrationOverlay()
 	}
 	if m.showTodo {
 		return m.renderTodoOverlay()
@@ -1221,7 +1428,9 @@ func (m Model) View() string {
 		return m.renderHelp()
 	}
 
-	availableHeight := m.height - 4
+	// Reserve -5: 1 línea de status + 1 separador en blanco + 3 del input box.
+	// Dejar siempre una fila de respiro antes del input evita que el log lo tape.
+	availableHeight := m.height - 5
 	if availableHeight < 5 {
 		availableHeight = 5
 	}
@@ -1229,7 +1438,7 @@ func (m Model) View() string {
 	status := m.renderStatus()
 	inputLine := m.renderInput()
 
-	return strings.Join([]string{body, status, inputLine}, "\n")
+	return strings.Join([]string{body, status, "", inputLine}, "\n")
 }
 
 // renderTranscript dibuja la conversación con word-wrap y scroll (PgUp/PgDn).
@@ -1363,11 +1572,13 @@ func (m Model) renderHelp() string {
 		"",
 		"Comandos slash (escribe / y Enter en el campo):",
 		"  /init       Configura tu proveedor y API key",
+		"  /search     Activa/desactiva la búsqueda web (Brave API key)",
 		"  /provider   Cambia el proveedor por defecto",
 		"  /model      Elige el modelo por defecto (listado en vivo)",
 		"  /sessions   Retoma una sesión guardada",
 		"  /new        Inicia una sesión nueva",
 		"  /todo, /plan Visualiza la lista de tareas (todowrite)",
+		"  /orchestration  Activa el routing multi-modelo y elige modelos de tu API",
 		"  /task       Lista sub-agentes",
 		"  /mcp        MCP servidores",
 		"  /diff       Muestra diff del working tree",
@@ -1379,13 +1590,17 @@ func (m Model) renderHelp() string {
 		"  /pr         Crear PR (gh pr create)",
 		"  /reasoning Nivel de razonamiento: off|low|medium|high",
 		"  /copy      Copia la última respuesta al portapapeles (/copy all)",
+		"  /context   Muestra tokens/estado del contexto de la sesión",
+		"  /trace     Diagnóstico: modelo resuelto, tamaño de contexto y tools",
 		"  /undo      Revierte la última iteración (checkpoint interno)",
+		"  /retry     Reinyecta el último prompt para reintentarlo (combínalo con /undo)",
 		"  /resume    Reanuda una sesión por ID",
 		"  /help, /?   Muestra esta ayuda",
 		"  /quit, /exit  Sale de forgen",
 		"",
 		"Atajos (no requieren Ctrl; las teclas de edición quedan libres):",
 		"  Enter        Envía el mensaje",
+		"  ↑ (vacío)   Recupera el último prompt para editarlo o reintentarlo",
 		"  Tab          Cambia agente (build ↔ plan)",
 		"  PgUp / PgDn  Desplazan la conversación",
 		"  Rueda ratón  Desplaza la conversación (trackpad también)",
@@ -1422,9 +1637,11 @@ func (m Model) renderStatus() string {
 	if m.phase != "" {
 		left += " " + m.styles.accent.Render(fmt.Sprintf("fase:%s", m.phase))
 	}
-	if list, err := m.app.TodoStore.Load(context.Background(), "default"); err == nil && len(list.Todos) > 0 {
-		d, tot := list.Progress()
-		left += " " + m.styles.toolDone.Render(fmt.Sprintf("📋 %d/%d", d, tot))
+	if m.app != nil && m.app.TodoStore != nil {
+		if list, err := m.app.TodoStore.Load(context.Background(), "default"); err == nil && len(list.Todos) > 0 {
+			d, tot := list.Progress()
+			left += " " + m.styles.toolDone.Render(fmt.Sprintf("📋 %d/%d", d, tot))
+		}
 	}
 	right := ""
 	if m.confirming {

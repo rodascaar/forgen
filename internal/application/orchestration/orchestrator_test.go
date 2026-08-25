@@ -56,6 +56,55 @@ func TestSingleModelDefaults(t *testing.T) {
 	}
 }
 
+func TestAutoPoolWithOneModelFallsBack(t *testing.T) {
+	config := testConfig()
+	config.Orchestration.Auto = true
+	// Solo un modelo disponible → se usa ese.
+	config.Providers[0].Models = []string{"gpt-5"}
+	orchestrator := newOrchestrator(config)
+
+	model := orchestrator.SelectFor(domain.PhaseBuild, "refactoriza para concurrencia")
+	if model.Key() != "openai/gpt-5" {
+		t.Fatalf("con un solo modelo el routing debe devolver ese, got %q", model.Key())
+	}
+}
+
+func TestAutoPoolRoutesByComplexity(t *testing.T) {
+	config := testConfig()
+	config.Orchestration.Auto = true
+	// Proveedor con catálogo variado; tiers inferidos por nombre.
+	config.Providers[0].Models = []string{"gpt-5", "gpt-5-mini"}
+	orchestrator := newOrchestrator(config)
+
+	if !orchestrator.IsMultiModel() {
+		t.Fatal("con Auto activo y varios modelos debería ser multi-modelo")
+	}
+	// Simple → liviano (gpt-5-mini, tier light).
+	simple := orchestrator.SelectFor(domain.PhaseBuild, "añade un campo al struct")
+	if simple.Key() != "openai/gpt-5-mini" {
+		t.Fatalf("simple model = %q, want openai/gpt-5-mini", simple.Key())
+	}
+	// Complejo → pesado/estándar (gpt-5).
+	complex := orchestrator.SelectFor(domain.PhaseBuild, "refactoriza para concurrencia y evita race conditions")
+	if complex.Key() != "openai/gpt-5" {
+		t.Fatalf("complejo model = %q, want openai/gpt-5", complex.Key())
+	}
+}
+
+func TestAutoPoolRespectsExplicitPool(t *testing.T) {
+	config := testConfig()
+	config.Orchestration.Auto = true
+	config.Providers[0].Models = []string{"gpt-5", "gpt-5-mini", "o3"}
+	// Pool limitado a un modelo: siempre se usa ese, aunque haya más.
+	config.Orchestration.Pool = []string{"openai/o3"}
+	orchestrator := newOrchestrator(config)
+
+	model := orchestrator.SelectFor(domain.PhaseBuild, "algo simple")
+	if model.Key() != "openai/o3" {
+		t.Fatalf("pool explícito model = %q, want openai/o3", model.Key())
+	}
+}
+
 func TestMultiModelRoleRouting(t *testing.T) {
 	config := testConfig()
 	config.ModelRoles = map[string][]string{

@@ -4,6 +4,23 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-1.1.0/) y
 el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 
+## [0.1.22] - 2026-08-25
+
+### Añadido
+
+- **Búsqueda web configurable (Brave)**: nuevo asistente `/search` en la TUI y `forgen config set search.provider|search.apikey`. La API key se guarda en el almacén seguro de credenciales (`SearchCredentialKey`) y se resuelve primero ahí y luego por env (`internal/adapters/in/tui/search.go`, `internal/adapters/in/cli/config.go`, `internal/app/app.go`).
+- **Reutilizar prompt fallido**: comando `/retry` reinyecta el último prompt enviado (combínalo con `/undo` para revertir + reintentar, estilo opencode) y `↑` con el campo vacío lo recupera para editarlo (`internal/adapters/in/tui/model.go`).
+- **Tool `ls`** en el registro y el allowlist de solo lectura; arregla la inconsistencia con los sub-agentes que la anunciaban (`internal/application/tools/registry.go`, `internal/application/agent/runner.go`).
+- **`/trace`** en la TUI: diagnóstico del modelo resuelto por fase, tamaño del contexto y tools registradas.
+- **Routing multi-modelo con una sola API key**: nuevo comando `/orchestration` en la TUI y config `orchestration.auto` / `orchestration.models`. Al activarlo, el orquestador elige entre los modelos disponibles del proveedor por defecto según fase y complejidad (tier inferido por nombre: `mini/nano/flash/8b`→light, `pro/opus/ultra/70b/253b`→heavy), sin editar `model_roles`/`model_metadata` a mano. Con `auto: false` (o un proveedor de 1 solo modelo) se usa un único modelo, igual que antes. CLI: `forgen config set orchestration.auto|models` (`internal/application/orchestration/orchestrator.go`, `internal/core/domain/config.go`, `internal/app/app.go`, `internal/adapters/in/tui/model.go`).
+- Test de layout que garantiza que el input queda siempre visible al fondo.
+
+### Corregido
+
+- **Input tapado por el log**: el layout de la TUI ahora reserva una fila de respiro y acota el alto del transcript (`m.height - 5`), de modo que el área de escritura siempre queda visible al fondo tras tareas largas (`internal/adapters/in/tui/model.go`).
+- **Error "herramienta no registrada" accionable**: cuando el modelo intenta una tool inexistente (p.ej. `ls`, `pwd`, `cat`), el error ahora sugiere usar `bash` para comandos shell y lista las tools disponibles, dejando claro que no es un fallo de forgen (`internal/application/tools/registry.go`).
+- **Lentitud percibida tras el commit de "inteligencia"**: se recortaron las descripciones verbosas de las tools (menos tokens por petición, sobre todo en modelos 9B/12B). El orquestador no elige un modelo más pesado si solo hay uno configurado; `/trace` permite verificar el modelo y el tamaño de contexto real por turno.
+
 ## [0.1.21] - 2026-08-25
 
 ### Añadido

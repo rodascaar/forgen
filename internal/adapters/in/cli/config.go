@@ -73,8 +73,51 @@ func runSetConfig(ctx context.Context, app *apppkg.App, key, value string) error
 			return fmt.Errorf("agente %q inválido (build | plan)", value)
 		}
 		config.Agent = value
+	case "search.provider":
+		value = strings.ToLower(value)
+		if value != "" && value != "brave" {
+			return fmt.Errorf("search.provider %q inválido (brave | vacío para deshabilitar)", value)
+		}
+		config.Search.Provider = value
+		if value == "brave" && config.Search.APIKeyEnv == "" {
+			config.Search.APIKeyEnv = "BRAVE_API_KEY"
+		}
+	case "search.apikey":
+		if value == "" {
+			return fmt.Errorf("search.apikey no puede estar vacío")
+		}
+		if app.Credentials == nil {
+			return fmt.Errorf("no hay almacén de credenciales disponible")
+		}
+		config.Search.Provider = "brave"
+		config.Search.APIKeyEnv = "BRAVE_API_KEY"
+		if err := app.Credentials.Set(ctx, apppkg.SearchCredentialKey("brave"), value); err != nil {
+			return fmt.Errorf("no se pudo guardar la API key de búsqueda: %w", err)
+		}
+		value = "(guardada en el almacén seguro de credenciales)"
+	case "orchestration.auto":
+		auto := strings.ToLower(value)
+		if auto != "true" && auto != "false" && auto != "1" && auto != "0" {
+			return fmt.Errorf("orchestration.auto %q inválido (true | false)", value)
+		}
+		config.Orchestration.Auto = auto == "true" || auto == "1"
+	case "orchestration.models":
+		config.Orchestration.Auto = true
+		value = strings.TrimSpace(value)
+		if value == "" {
+			config.Orchestration.Pool = nil
+		} else {
+			parts := strings.Split(value, ",")
+			pool := make([]string, 0, len(parts))
+			for _, p := range parts {
+				if p = strings.TrimSpace(p); p != "" {
+					pool = append(pool, p)
+				}
+			}
+			config.Orchestration.Pool = pool
+		}
 	default:
-		return fmt.Errorf("clave desconocida %q (usa provider, model o agent)", key)
+		return fmt.Errorf("clave desconocida %q (usa provider, model, agent, search.provider, search.apikey, orchestration.auto o orchestration.models)", key)
 	}
 	if err := app.ConfigService.Save(ctx, config); err != nil {
 		return err

@@ -123,26 +123,66 @@ func (o *Orchestrator) Provider(ctx context.Context, model domain.Model) (ports.
 	return provider, nil
 }
 
-// roleModels devuelve los modelos configurados para un rol (default = modelo único).
+// roleModels devuelve los modelos configurados para un rol. Si el rol no tiene
+// modelos explícitos (model_roles) y el routing automático está activo, usa el
+// pool del proveedor por defecto. En último caso, el modelo único por defecto.
 func (o *Orchestrator) roleModels(role domain.ModelRole) []domain.Model {
 	keys, ok := o.config.ModelRoles[string(role)]
-	if !ok || len(keys) == 0 {
-		return []domain.Model{o.defaultModel()}
-	}
-	models := make([]domain.Model, 0, len(keys))
-	for _, key := range keys {
-		if model, ok := parseModelKey(key, o.config); ok {
-			models = append(models, model)
+	if ok && len(keys) > 0 {
+		models := make([]domain.Model, 0, len(keys))
+		for _, key := range keys {
+			if model, ok := parseModelKey(key, o.config); ok {
+				models = append(models, model)
+			}
+		}
+		if len(models) > 0 {
+			return models
 		}
 	}
-	if len(models) == 0 {
-		return []domain.Model{o.defaultModel()}
+	// Routing automático: pool del proveedor por defecto (una sola API key).
+	if pool := o.autoPool(); len(pool) > 0 {
+		return pool
 	}
-	return models
+	return []domain.Model{o.defaultModel()}
 }
 
 func (o *Orchestrator) defaultModel() domain.Model {
 	return domain.Model{Provider: o.config.Default.Provider, ID: o.config.Default.Model}
+}
+
+// autoPool construye el pool de modelos del proveedor por defecto cuando el
+// routing automático está activo. Usa los modelos elegidos en
+// orchestration.pool o, si está vacío, todos los disponibles del proveedor.
+func (o *Orchestrator) autoPool() []domain.Model {
+	if !o.config.Orchestration.Auto {
+		return nil
+	}
+	provider := o.config.Default.Provider
+	var ids []string
+	if len(o.config.Orchestration.Pool) > 0 {
+		ids = o.config.Orchestration.Pool
+	} else if pc, ok := o.config.FindProvider(provider); ok {
+		ids = pc.Models
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	pool := make([]domain.Model, 0, len(ids))
+	for _, id := range ids {
+		if model, ok := o.parsePoolModel(id); ok {
+			pool = append(pool, model)
+		}
+	}
+	return pool
+}
+
+// parsePoolModel acepta una entrada del pool: "provider/model" o solo el ID
+// del modelo (se asume el proveedor por defecto).
+func (o *Orchestrator) parsePoolModel(id string) (domain.Model, bool) {
+	if strings.Contains(id, "/") {
+		return parseModelKey(id, o.config)
+	}
+	return domain.Model{Provider: o.config.Default.Provider, ID: id}, true
 }
 
 // pickFromPool elige por scoring agnóstico: 0→light, 1→standard, 2+→heavy.
@@ -169,6 +209,27 @@ func (o *Orchestrator) pickFromPool(pool []domain.Model, prompt string) domain.M
 func (o *Orchestrator) tierOf(model domain.Model) domain.Tier {
 	if metadata, ok := o.config.ModelMetadata[model.Key()]; ok && metadata.Tier != "" {
 		return metadata.Tier
+	}
+	return inferTier(model.ID)
+}
+
+// inferTier deduce el nivel de un modelo por heurística de nombre. Se usa como
+// fallback cuando no hay model_metadata explícita, para que el routing por
+// complejidad funcione sin configurar tiers a mano. Override-able con
+// model_metadata.
+func inferTier(id string) domain.Tier {
+	id = strings.ToLower(id)
+	heavy := []string{"pro", "opus", "ultra", "max", "large", "405b", "253b", "120b", "70b", "qwen-max", "deepseek-r1", "nemotron-ultra", "gigant"}
+	for _, kw := range heavy {
+		if strings.Contains(id, kw) {
+			return domain.TierHeavy
+		}
+	}
+	light := []string{"mini", "nano", "flash", "haiku", "small", "lite", "light", "1b", "3b", "7b", "8b", "12b", "fast"}
+	for _, kw := range light {
+		if strings.Contains(id, kw) {
+			return domain.TierLight
+		}
 	}
 	return domain.TierStandard
 }

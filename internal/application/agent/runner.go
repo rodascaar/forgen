@@ -494,6 +494,7 @@ func (r *Runner) executeWithPermission(ctx context.Context, sessionID string, ag
 var readOnlyToolAllowlist = map[string]bool{
 	"read":                  true,
 	"read_many_files":       true,
+	"ls":                    true,
 	"glob":                  true,
 	"grep":                  true,
 	"git_status":            true,
