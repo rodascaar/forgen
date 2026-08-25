@@ -37,6 +37,28 @@ func TestGlob(t *testing.T) {
 	}
 }
 
+func TestReadOutsideWorkspaceFails(t *testing.T) {
+	root := t.TempDir()
+	fileSystem := fs.New(root)
+	if _, err := fileSystem.Read(context.Background(), "../../etc/passwd"); err == nil {
+		t.Fatal("read fuera del workspace debería fallar")
+	}
+	if _, err := fileSystem.Read(context.Background(), "/etc/passwd"); err == nil {
+		t.Fatal("read absoluta fuera debería fallar")
+	}
+	// dentro funciona
+	if _, err := fileSystem.Read(context.Background(), "a.go"); err == nil {
+		t.Fatal("read de archivo inexistente dentro debería fallar con otro error (no encontró)")
+	}
+}
+
+func TestGlobOutsideWorkspaceFails(t *testing.T) {
+	fileSystem := fs.New(t.TempDir())
+	if _, err := fileSystem.Glob(context.Background(), "../../*.go"); err == nil {
+		t.Fatal("glob fuera del workspace debería fallar")
+	}
+}
+
 func TestSearchFindsLines(t *testing.T) {
 	fileSystem := fs.New(t.TempDir())
 	_ = fileSystem.Write(context.Background(), "src/main.go", []byte("package main\nfunc main() {}\n"))

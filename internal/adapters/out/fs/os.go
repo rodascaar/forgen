@@ -42,9 +42,32 @@ func (o *OSFileSystem) resolve(path string) string {
 	return filepath.Join(o.root, path)
 }
 
+// safeResolve resuelve la ruta y valida contención dentro del workspace.
+// Evita escape por ../.. o rutas absolutas fuera de root (opencode/claude/codex).
+func (o *OSFileSystem) safeResolve(path string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", fmt.Errorf("ruta vacía")
+	}
+	rootClean := filepath.Clean(o.root)
+	resolved := o.resolve(path)
+	resolved = filepath.Clean(resolved)
+	rel, err := filepath.Rel(rootClean, resolved)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("ruta fuera del workspace: %s", path)
+	}
+	return resolved, nil
+}
+
 // Read implementa ports.FileSystem.
 func (o *OSFileSystem) Read(_ context.Context, path string) ([]byte, error) {
-	data, err := os.ReadFile(o.resolve(path))
+	resolved, err := o.safeResolve(path)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(resolved)
 	if err != nil {
 		return nil, err
 	}
@@ -53,7 +76,10 @@ func (o *OSFileSystem) Read(_ context.Context, path string) ([]byte, error) {
 
 // Write implementa ports.FileSystem.
 func (o *OSFileSystem) Write(_ context.Context, path string, data []byte) error {
-	resolved := o.resolve(path)
+	resolved, err := o.safeResolve(path)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(resolved), 0o755); err != nil {
 		return fmt.Errorf("crear directorios de %s: %w", resolved, err)
 	}
@@ -65,7 +91,11 @@ func (o *OSFileSystem) Write(_ context.Context, path string, data []byte) error 
 
 // Exists implementa ports.FileSystem.
 func (o *OSFileSystem) Exists(_ context.Context, path string) (bool, error) {
-	_, err := os.Stat(o.resolve(path))
+	resolved, err := o.safeResolve(path)
+	if err != nil {
+		return false, err
+	}
+	_, err = os.Stat(resolved)
 	if err == nil {
 		return true, nil
 	}
@@ -78,16 +108,34 @@ func (o *OSFileSystem) Exists(_ context.Context, path string) (bool, error) {
 // Glob implementa ports.FileSystem con soporte de patrones ** (doublestar).
 func (o *OSFileSystem) Glob(_ context.Context, pattern string) ([]string, error) {
 	base := o.resolve(".")
-	// Dividir el patrón en base + patrón relativo para listar correctamente.
+	// Guardia: el patrón no debe escapar del workspace (rechaza ../.. y absolutas externas).
+	if _, err := o.safeResolve(o.globBase(pattern)); err != nil {
+		return nil, err
+	}
 	matches, err := doublestar.FilepathGlob(o.resolve(pattern))
 	if err != nil {
 		return nil, err
 	}
 	result := make([]string, 0, len(matches))
 	for _, match := range matches {
+		if _, err := o.safeResolve(match); err != nil {
+			continue // descartar coincidencia fuera del workspace
+		}
 		result = append(result, filepath.Clean(relativePath(base, match)))
 	}
 	return result, nil
+}
+
+// globBase devuelve el prefijo de un patrón hasta el primer wildcard (*?[{), o el patrón si no tiene.
+func (o *OSFileSystem) globBase(pattern string) string {
+	idx := strings.IndexAny(pattern, "*?[{")
+	if idx < 0 {
+		return pattern
+	}
+	if idx == 0 {
+		return "."
+	}
+	return pattern[:idx]
 }
 
 // Search implementa ports.FileSystem.
@@ -98,7 +146,10 @@ func (o *OSFileSystem) Search(_ context.Context, root, query, include string) ([
 	}
 
 	base := o.resolve(".")
-	searchRoot := o.resolve(root)
+	searchRoot, boundaryErr := o.safeResolve(root)
+	if boundaryErr != nil {
+		return nil, boundaryErr
+	}
 	gitignore := o.loadGitignore(base)
 	matches := make([]ports.SearchMatch, 0, 32)
 

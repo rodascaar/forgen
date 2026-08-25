@@ -202,9 +202,9 @@ func (m *rpcMessenger) Finished(_ string, finalText string) {
 }
 
 // Confirm implementa ports.PermissionResponder (auto-deny en modo servidor).
-func (m *rpcMessenger) Confirm(_ context.Context, _ string, call domain.ToolCall) (bool, error) {
+func (m *rpcMessenger) Confirm(_ context.Context, _ string, call domain.ToolCall) (domain.PermissionChoice, error) {
 	m.server.notify("agent/confirm", map[string]any{"tool": call.Name})
-	return false, nil
+	return domain.ChoiceDeny(), nil
 }
 
 // Remember implementa ports.PermissionResponder.

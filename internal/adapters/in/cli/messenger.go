@@ -83,18 +83,25 @@ func (m *textMessenger) Finished(_ string, finalText string) {
 	// En modo texto el texto final ya se emitió por StreamText.
 }
 
-// Confirm implementa ports.PermissionResponder (prompt Y/N en terminal).
-func (m *textMessenger) Confirm(_ context.Context, _ string, call domain.ToolCall) (bool, error) {
+// Confirm implementa ports.PermissionResponder (prompt Y/N/A en terminal).
+func (m *textMessenger) Confirm(_ context.Context, _ string, call domain.ToolCall) (domain.PermissionChoice, error) {
 	if !m.json {
 		_, _ = fmt.Fprintf(m.out, "\n\x1b[33mPermiso para: %s\x1b[0m\n", toolCallSummary(call))
-		_, _ = fmt.Fprint(m.out, "¿Permitir? [y/N] ")
+		_, _ = fmt.Fprint(m.out, "¿Permitir? [y/N/a=siempre] ")
 	}
 	scanner := bufio.NewScanner(m.in)
 	if !scanner.Scan() {
-		return false, fmt.Errorf("sin entrada del usuario")
+		return domain.ChoiceDeny(), fmt.Errorf("sin entrada del usuario")
 	}
 	answer := strings.ToLower(strings.TrimSpace(scanner.Text()))
-	return answer == "y" || answer == "yes", nil
+	switch answer {
+	case "y", "yes":
+		return domain.ChoiceAllow(), nil
+	case "a", "always", "alw":
+		return domain.ChoiceAllowAlways(), nil
+	default:
+		return domain.ChoiceDeny(), nil
+	}
 }
 
 // Remember implementa ports.PermissionResponder.

@@ -13,9 +13,20 @@ import (
 
 // sensitiveTools requieren confirmación en modo on_request.
 var sensitiveTools = map[string]bool{
-	"write": true,
-	"edit":  true,
-	"bash":  true,
+	"write":      true,
+	"edit":       true,
+	"bash":       true,
+	"lsp_rename": true,
+}
+
+// sensitiveReadPatterns se aplican a herramientas de lectura para detectar
+// ficheros sensibles (.env, credenciales) — requieren confirmación (opencode/claude/codex).
+var sensitiveReadPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)(^|/)\.env(\.|$)`),
+	regexp.MustCompile(`(?i)\.(pem|key|crt|p12|pfx)$`),
+	regexp.MustCompile(`(?i)(^|/)secrets?/`),
+	regexp.MustCompile(`(?i)(^|/)(\.aws|\.ssh|credentials)(/|$|\.)`),
+	regexp.MustCompile(`(?i)(id_rsa|id_ed25519|\.git-credentials)`),
 }
 
 // dangerousPatterns se detectan incluso en modo auto (fail-safe).
@@ -59,6 +70,12 @@ func (s *Service) Decide(_ context.Context, sessionID string, call domain.ToolCa
 	// 1. Reglas explícitas primero (mayor precedencia).
 	if rule, ok := s.matchRule(call); ok {
 		return decisionFromLevel(rule.Level, "regla de permiso aplicada"), nil
+	}
+
+	// 1.5. Lectura sensible (.env, credenciales): se pregunta siempre, incluso en auto.
+	if s.isSensitiveRead(call) {
+		return domain.Decision{Allowed: false, Level: domain.PermissionOnRequest,
+			Reason: "lectura de archivo sensible (credenciales) requiere confirmación"}, nil
 	}
 
 	// 2. Detección de peligro: se pregunta siempre.
@@ -148,6 +165,35 @@ func (s *Service) isDangerous(call domain.ToolCall) bool {
 	return false
 }
 
+func (s *Service) isSensitiveRead(call domain.ToolCall) bool {
+	// Solo lectura sensible: read/read_many_files/glob/grep sobre ficheros sensibles.
+	switch call.Name {
+	case "read", "read_many_files", "glob", "grep":
+	default:
+		return false
+	}
+	// Recolectar paths de argumentos.
+	var targets []string
+	if p, ok := call.Arguments["path"].(string); ok {
+		targets = append(targets, p)
+	}
+	if paths, ok := call.Arguments["paths"].([]any); ok {
+		for _, v := range paths {
+			if s, ok := v.(string); ok {
+				targets = append(targets, s)
+			}
+		}
+	}
+	for _, target := range targets {
+		for _, pat := range sensitiveReadPatterns {
+			if pat.MatchString(target) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (s *Service) isPreToolBlocked(call domain.ToolCall) (bool, string) {
 	// Solo para herramientas de escritura/bash sobre archivos sensibles.
 	if call.Name != "write" && call.Name != "edit" && call.Name != "apply_patch" && call.Name != "bash" {
@@ -171,6 +217,15 @@ func (s *Service) isPreToolBlocked(call domain.ToolCall) (bool, string) {
 		}
 	}
 	return false, ""
+}
+
+// AddRule añade una regla en memoria (sesión) — para "permitir siempre" repetido.
+// En modo Never no se añade (seguridad: nada se sobreescribe a menos permisivo).
+func (s *Service) AddRule(rule domain.PermissionRule) {
+	if s.mode == domain.PermissionModeNever {
+		return
+	}
+	s.rules = append(s.rules, rule)
 }
 
 // RuleFor builds a rule to persist for a tool call.

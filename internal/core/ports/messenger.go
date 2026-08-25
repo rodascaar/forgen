@@ -24,8 +24,8 @@ type PermissionDecider interface {
 
 // PermissionResponder resuelve las llamadas que requieren confirmación del usuario.
 type PermissionResponder interface {
-	// Confirm pregunta al usuario y devuelve si se permite.
-	Confirm(ctx context.Context, sessionID string, call domain.ToolCall) (bool, error)
+	// Confirm pregunta al usuario y devuelve la elección (permitir/denegar/permitir siempre).
+	Confirm(ctx context.Context, sessionID string, call domain.ToolCall) (domain.PermissionChoice, error)
 	// Remember persiste una regla aprendida de la decisión.
 	Remember(ctx context.Context, sessionID string, call domain.ToolCall, level domain.PermissionLevel) error
 }

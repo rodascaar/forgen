@@ -843,8 +843,8 @@ func (n *noopMessenger) Finished(_ string, _ string)                            
 // autoDenyResponder niega cualquier confirmación interactiva en subagente.
 type autoDenyResponder struct{}
 
-func (a *autoDenyResponder) Confirm(_ context.Context, _ string, _ domain.ToolCall) (bool, error) {
-	return false, nil
+func (a *autoDenyResponder) Confirm(_ context.Context, _ string, _ domain.ToolCall) (domain.PermissionChoice, error) {
+	return domain.ChoiceDeny(), nil
 }
 func (a *autoDenyResponder) Remember(_ context.Context, _ string, _ domain.ToolCall, _ domain.PermissionLevel) error {
 	return nil

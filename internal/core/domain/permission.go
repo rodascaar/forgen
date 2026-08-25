@@ -35,3 +35,19 @@ type Decision struct {
 }
 
 func (d Decision) Denied() bool { return !d.Allowed }
+
+// PermissionChoice es la respuesta del usuario a una confirmación de permiso.
+// Remember=true persiste la regla como "permitir siempre" (nivel Auto).
+type PermissionChoice struct {
+	Allowed bool
+	Remember bool
+}
+
+// ChoiceDeny niega una vez.
+func ChoiceDeny() PermissionChoice { return PermissionChoice{Allowed: false} }
+
+// ChoiceAllow permite una vez.
+func ChoiceAllow() PermissionChoice { return PermissionChoice{Allowed: true} }
+
+// ChoiceAllowAlways permite y persiste la regla.
+func ChoiceAllowAlways() PermissionChoice { return PermissionChoice{Allowed: true, Remember: true} }

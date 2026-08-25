@@ -60,7 +60,7 @@ type Model struct {
 	running         bool
 	confirming      bool
 	confirmCall     domain.ToolCall
-	confirmCh       chan bool
+	confirmCh       chan domain.PermissionChoice
 	agentName       string
 	modelKey        string
 	reasoning       string
@@ -553,16 +553,20 @@ func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Mientras se confirma un permiso, las teclas son respuestas Y/N.
+	// Mientras se confirma un permiso, las teclas son respuestas Y/N/A.
 	if m.confirming {
 		switch message.String() {
 		case "y", "Y":
 			m.confirming = false
-			m.confirmCh <- true
+			m.confirmCh <- domain.ChoiceAllow()
 			m.append("notice", fmt.Sprintf("Permiso concedido: %s", toolCallLabel(m.confirmCall)))
+		case "a", "A":
+			m.confirming = false
+			m.confirmCh <- domain.ChoiceAllowAlways()
+			m.append("notice", fmt.Sprintf("Permiso concedido y guardado (permitir siempre): %s", toolCallLabel(m.confirmCall)))
 		case "n", "N", "esc", "ctrl+c":
 			m.confirming = false
-			m.confirmCh <- false
+			m.confirmCh <- domain.ChoiceDeny()
 			m.append("notice", fmt.Sprintf("Permiso denegado: %s", toolCallLabel(m.confirmCall)))
 		case "?", "h":
 			m.append("notice", permissionDetail(m.confirmCall))
@@ -1348,7 +1352,7 @@ func (m Model) renderStatus() string {
 	}
 	right := ""
 	if m.confirming {
-		right = m.styles.notice.Render(fmt.Sprintf("¿Permitir %s? (y/n, ? ver detalle)", toolCallLabel(m.confirmCall)))
+		right = m.styles.notice.Render(fmt.Sprintf("¿Permitir %s? (y/n/a=siempre, ? detalle)", toolCallLabel(m.confirmCall)))
 	} else if m.running {
 		right = m.styles.dim.Render("trabajando... · Ctrl+C cancela")
 	} else if m.quitArmed {
@@ -1370,7 +1374,7 @@ func (m Model) renderStatus() string {
 
 func (m Model) renderInput() string {
 	if m.confirming {
-		return m.styles.notice.Render(fmt.Sprintf("❯ ¿Permitir ejecutar %s? [y/N, ? detalle]", toolCallLabel(m.confirmCall)))
+		return m.styles.notice.Render(fmt.Sprintf("❯ ¿Permitir ejecutar %s? [y/N/a=siempre, ? detalle]", toolCallLabel(m.confirmCall)))
 	}
 	// Barra de escritura con borde de marca: siempre clara dónde escribir.
 	borderColor := m.styles.accent.GetForeground()

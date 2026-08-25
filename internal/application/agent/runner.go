@@ -341,14 +341,17 @@ func (r *Runner) executeTools(ctx context.Context, sessionID, workspace string, 
 			continue
 		}
 		if !decision.Allowed && decision.Level == domain.PermissionOnRequest {
-			allowed, confirmErr := r.responder.Confirm(ctx, sessionID, call)
+			choice, confirmErr := r.responder.Confirm(ctx, sessionID, call)
 			if confirmErr != nil {
 				denied := domain.ToolResult{ToolCallID: call.ID, OK: false, Error: confirmErr}
 				permResults[i] = permResult{idx: i, call: call, result: &denied}
 				continue
 			}
-			if allowed {
+			if choice.Allowed {
 				decision = domain.Decision{Allowed: true, Level: domain.PermissionOnRequest, Reason: "confirmado por usuario"}
+				if choice.Remember {
+					r.rememberAllow(call)
+				}
 			}
 		}
 		if !decision.Allowed {
@@ -457,12 +460,15 @@ func (r *Runner) executeWithPermission(ctx context.Context, sessionID string, ag
 		return domain.ToolResult{ToolCallID: call.ID, OK: false, Error: fmt.Errorf("decidir permiso: %w", err)}
 	}
 	if !decision.Allowed && decision.Level == domain.PermissionOnRequest {
-		allowed, confirmErr := r.responder.Confirm(ctx, sessionID, call)
+		choice, confirmErr := r.responder.Confirm(ctx, sessionID, call)
 		if confirmErr != nil {
 			return domain.ToolResult{ToolCallID: call.ID, OK: false, Error: confirmErr}
 		}
-		if allowed {
+		if choice.Allowed {
 			decision = domain.Decision{Allowed: true, Level: domain.PermissionOnRequest, Reason: "confirmado por usuario"}
+			if choice.Remember {
+				r.rememberAllow(call)
+			}
 		}
 	}
 	if !decision.Allowed {
@@ -868,6 +874,22 @@ func extractPatchPath(patch string) string {
 		}
 	}
 	return ""
+}
+
+// rememberAllow persiste "permitir siempre" para el resto de la sesión:
+// añade una regla Auto al decisor (si lo soporta).
+func (r *Runner) rememberAllow(call domain.ToolCall) {
+	type ruleAdder interface {
+		AddRule(domain.PermissionRule)
+	}
+	if adder, ok := r.decider.(ruleAdder); ok {
+		adder.AddRule(domain.PermissionRule{
+			Tool:      call.Name,
+			Arguments: call.Arguments,
+			Level:     domain.PermissionAuto,
+			IsExact:   true,
+		})
+	}
 }
 
 func errorString(err error) string {

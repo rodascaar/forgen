@@ -58,15 +58,15 @@ func (m *tuiMessenger) Finished(_ string, finalText string) {
 	m.send(finishedMsg{finalText: finalText})
 }
 
-// Confirm implementa ports.PermissionResponder (prompt interactivo Y/N).
-func (m *tuiMessenger) Confirm(ctx context.Context, _ string, call domain.ToolCall) (bool, error) {
-	response := make(chan bool, 1)
+// Confirm implementa ports.PermissionResponder (prompt interactivo Y/N/A = allow always).
+func (m *tuiMessenger) Confirm(ctx context.Context, _ string, call domain.ToolCall) (domain.PermissionChoice, error) {
+	response := make(chan domain.PermissionChoice, 1)
 	m.send(confirmRequestMsg{call: call, response: response})
 	select {
-	case allowed := <-response:
-		return allowed, nil
+	case choice := <-response:
+		return choice, nil
 	case <-ctx.Done():
-		return false, ctx.Err()
+		return domain.ChoiceDeny(), ctx.Err()
 	}
 }
 
@@ -94,7 +94,7 @@ type finishedMsg struct{ finalText string }
 
 type confirmRequestMsg struct {
 	call     domain.ToolCall
-	response chan bool
+	response chan domain.PermissionChoice
 }
 
 type runDoneMsg struct {

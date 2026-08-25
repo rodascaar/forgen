@@ -91,8 +91,8 @@ func (r *recordingMessenger) Finished(_ string, finalText string) {
 
 type allowResponder struct{}
 
-func (allowResponder) Confirm(_ context.Context, _ string, _ domain.ToolCall) (bool, error) {
-	return true, nil
+func (allowResponder) Confirm(_ context.Context, _ string, _ domain.ToolCall) (domain.PermissionChoice, error) {
+	return domain.ChoiceAllow(), nil
 }
 func (allowResponder) Remember(_ context.Context, _ string, _ domain.ToolCall, _ domain.PermissionLevel) error {
 	return nil

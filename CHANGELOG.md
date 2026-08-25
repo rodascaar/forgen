@@ -4,6 +4,13 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-1.1.0/) y
 el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 
+## [0.1.18] - 2026-08-25
+
+### Añadido
+
+- **Seguridad lectura + escape workspace**: lectura de ficheros sensibles (`.env`, `*.pem`, `*.key`, `~/.aws`, `.ssh`, `id_rsa`, `credentials`) ahora pide confirmación incluso en modo `auto` (`internal/application/permission/service.go:isSensitiveRead`). `read`/`glob`/`grep`/`read_many_files` con `../` o ruta absoluta fuera del workspace fallan con `ruta fuera del workspace` (`internal/adapters/out/fs/os.go:safeResolve` — boundary check replicado de `checkpoint.go`).
+- **Confirmación Y/N/A**: el prompt de permiso ahora ofrece `y` permitir, `n` denegar y `a` **permitir siempre** (persiste regla Auto en la sesión vía `permission.Service.AddRule`). TUI (`internal/adapters/in/tui/model.go`), CLI headless (`internal/adapters/in/cli/messenger.go`) y `PermissionChoice` en dominio (`internal/core/domain/permission.go`).
+
 ## [0.1.17] - 2026-08-25
 
 ### Corregido
