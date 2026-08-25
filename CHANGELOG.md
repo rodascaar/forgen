@@ -4,6 +4,20 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-1.1.0/) y
 el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 
+## [0.1.19] - 2026-08-25
+
+### Corregido
+
+- **Bug: "ruta fuera del workspace" rompía el system prompt**: el boundary de contención se había aplicado al `FileSystem` base (`internal/adapters/out/fs/os.go`), lo que rompía el walk-up de `AGENTS.md`/`CLAUDE.md` a directorios padres de `LoadProjectContext` (daba `verificar .../AGENTS.md: ruta fuera del workspace`). Se revierte: el `FileSystem` vuelve a `resolve` original y la contención vive en la capa de permisos del agente (patrón opencode `external_directory` / codex `writable_roots`).
+
+### Añadido
+
+- **Contención en `permission.Service`** (`internal/application/permission/service.go`) — solo pregunta en casos de riesgo, archivos normales dentro del workspace nunca preguntan:
+  - `isOutsideWorkspace`: lectura/escritura fuera del `cwd` (`../`, absoluta, `~`, glob) → confirmación.
+  - `isDatabaseWrite`: escribir/editar archivos `.db/.sqlite/.sqlite3/.mdb/.db-wal/.db-shm` → confirmación.
+  - `dangerousSQLPatterns`: `DELETE FROM`, `DROP`, `TRUNCATE`, `DELETE/UPDATE WHERE 1=1` en bash (sqlite3/psql/mysql) → confirmación.
+  - `dangerousPatterns` ampliado: `rm -f/-r/--force`, `rm/rmdir/unlink/del` sobre rutas sistema/absolutas/home, `kill -9` (patrón codex `is_dangerous_command`).
+
 ## [0.1.18] - 2026-08-25
 
 ### Añadido

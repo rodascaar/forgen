@@ -92,6 +92,71 @@ func TestSensitiveReadCredentials(t *testing.T) {
 	}
 }
 
+func TestOutsideWorkspacePromptsInAuto(t *testing.T) {
+	service := permission.NewService(domain.PermissionModeAuto, "/ws", nil, nil)
+	cases := []string{"../../etc/passwd", "/etc/passwd", "~/secrets/x", "../x.go"}
+	for _, p := range cases {
+		decision, _ := service.Decide(context.Background(), "s1", domain.ToolCall{Name: "read", Arguments: map[string]any{"path": p}})
+		if decision.Allowed {
+			t.Fatalf("read %s fuera del workspace debería requerir confirmación en auto", p)
+		}
+	}
+	// dentro NO pregunta
+	decision, _ := service.Decide(context.Background(), "s1", domain.ToolCall{Name: "read", Arguments: map[string]any{"path": "src/a.go"}})
+	if !decision.Allowed {
+		t.Fatal("read dentro del workspace no debería requerir confirmación")
+	}
+}
+
+func TestDatabaseWritePromptsInAuto(t *testing.T) {
+	service := permission.NewService(domain.PermissionModeAuto, "/ws", nil, nil)
+	for _, db := range []string{"app.db", "data.sqlite3", "cache/db.sqlite"} {
+		decision, _ := service.Decide(context.Background(), "s1", domain.ToolCall{Name: "write", Arguments: map[string]any{"path": db}})
+		if decision.Allowed {
+			t.Fatalf("write %s (base de datos) debería requerir confirmación", db)
+		}
+	}
+	// archivo normal dentro NO pregunta
+	decision, _ := service.Decide(context.Background(), "s1", domain.ToolCall{Name: "write", Arguments: map[string]any{"path": "a.go"}})
+	if !decision.Allowed {
+		t.Fatal("write de archivo normal dentro no debería preguntar")
+	}
+}
+
+func TestDangerousSQLPromptsInAuto(t *testing.T) {
+	service := permission.NewService(domain.PermissionModeAuto, "/ws", nil, nil)
+	for _, c := range []string{
+		"sqlite3 app.db 'DELETE FROM users'",
+		"psql -c 'DROP TABLE users'",
+		"mysql -e 'TRUNCATE TABLE logs'",
+	} {
+		decision, _ := service.Decide(context.Background(), "s1", domain.ToolCall{Name: "bash", Arguments: map[string]any{"command": c}})
+		if decision.Allowed {
+			t.Fatalf("bash %q (SQL destructivo) debería requerir confirmación", c)
+		}
+	}
+	// SELECT / UPDATE con WHERE seguro no pregunta
+	decision, _ := service.Decide(context.Background(), "s1", domain.ToolCall{Name: "bash", Arguments: map[string]any{"command": "sqlite3 app.db 'SELECT * FROM users'"}})
+	if !decision.Allowed {
+		t.Fatal("SELECT no debería requerir confirmación")
+	}
+}
+
+func TestRmPromptsInAuto(t *testing.T) {
+	service := permission.NewService(domain.PermissionModeAuto, "/ws", nil, nil)
+	for _, c := range []string{"rm -f /tmp/x", "rm -rf /etc", "rm -r /home/user", "unlink /etc/passwd", "rmdir /etc"} {
+		decision, _ := service.Decide(context.Background(), "s1", domain.ToolCall{Name: "bash", Arguments: map[string]any{"command": c}})
+		if decision.Allowed {
+			t.Fatalf("bash %q (borrado sistema) debería requerir confirmación", c)
+		}
+	}
+	// rm dentro del workspace sin -f no pregunta (no destructivo de sistema)
+	decision, _ := service.Decide(context.Background(), "s1", domain.ToolCall{Name: "bash", Arguments: map[string]any{"command": "rm tmp/output.txt"}})
+	if !decision.Allowed {
+		t.Fatal("rm de archivo local sin flags no debería preguntar")
+	}
+}
+
 func TestExplicitRuleWins(t *testing.T) {
 	rules := []domain.PermissionRule{
 		{Tool: "bash", Arguments: map[string]any{"command": "go test ./..."}, Level: domain.PermissionAuto, IsExact: true},

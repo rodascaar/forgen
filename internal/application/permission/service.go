@@ -4,6 +4,7 @@ package permission
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -32,11 +33,23 @@ var sensitiveReadPatterns = []*regexp.Regexp{
 // dangerousPatterns se detectan incluso en modo auto (fail-safe).
 var dangerousPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\bsudo\b`),
-	regexp.MustCompile(`(?i)\brm\s+(-rf?|--recursive)\s+/`),
-	regexp.MustCompile(`(?i)\b(dd|mkfs\.\w+|fdisk|shutdown|reboot)\b`),
+	// rm con -f/-r/--force/--recursive (código-fuente codex: rm -f también peligroso)
+	regexp.MustCompile(`(?i)\brm\s+(-[a-z]*[fr][a-z]*|--force|--recursive)\s+`),
+	// delete/rm sobre rutas del sistema o absolutas/home/../ (no archivo local simple)
+	regexp.MustCompile(`(?i)\b(rm|rmdir|unlink|del|erase)\s+(\.\.?/|~/?|/)`),
+	regexp.MustCompile(`(?i)\b(dd|mkfs\.\w+|fdisk|shutdown|reboot|kill\s+-9)\b`),
 	regexp.MustCompile(`(?i):\(\)\s*\{\s*:\|:&\s*\};:`),
 	regexp.MustCompile(`(?i)\bchmod\s+777\b`),
 }
+
+// dangerousSQLPatterns detectan SQL destructivo sobre base de datos activa.
+var dangerousSQLPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)\b(DELETE\s+FROM|DROP\s+(TABLE|DATABASE|SCHEMA)|TRUNCATE(\s+TABLE)?)\b`),
+	regexp.MustCompile(`(?i)\b(DELETE|UPDATE)\s+.*\s+WHERE\s+1\s*=\s*1\b`),
+}
+
+// databaseExtensions marca archivos de base de datos activa (write/edit → confirmar).
+var databaseExtensions = []string{".db", ".sqlite", ".sqlite3", ".mdb", ".db3", ".db-wal", ".db-shm"}
 
 // preToolBlockPatterns bloquea determinísticamente sin LLM (PreToolUse hook).
 var preToolBlockPatterns = []*regexp.Regexp{
@@ -78,7 +91,19 @@ func (s *Service) Decide(_ context.Context, sessionID string, call domain.ToolCa
 			Reason: "lectura de archivo sensible (credenciales) requiere confirmación"}, nil
 	}
 
-	// 2. Detección de peligro: se pregunta siempre.
+	// 1.6. Escritura sobre base de datos activa (.db/.sqlite): se pregunta.
+	if s.isDatabaseWrite(call) {
+		return domain.Decision{Allowed: false, Level: domain.PermissionOnRequest,
+			Reason: "escritura sobre base de datos activa requiere confirmación"}, nil
+	}
+
+	// 1.7. Fuera del workspace (cwd): se pregunta (opencode external_directory / codex writable_roots).
+	if s.isOutsideWorkspace(call) {
+		return domain.Decision{Allowed: false, Level: domain.PermissionOnRequest,
+			Reason: "acceso fuera del directorio de trabajo requiere confirmación"}, nil
+	}
+
+	// 2. Detección de peligro: se pregunta siempre (rm/delete/SQL destructivo).
 	if s.isDangerous(call) {
 		return domain.Decision{Allowed: false, Level: domain.PermissionOnRequest,
 			Reason: "comando potencialmente destructivo detectado"}, nil
@@ -162,7 +187,108 @@ func (s *Service) isDangerous(call domain.ToolCall) bool {
 			return true
 		}
 	}
+	// SQL destructivo sobre base de datos activa (sqlite3/psql/mysql).
+	for _, pattern := range dangerousSQLPatterns {
+		if pattern.MatchString(command) {
+			return true
+		}
+	}
 	return false
+}
+
+// isDatabaseWrite detecta escritura sobre archivos de base de datos activa.
+func (s *Service) isDatabaseWrite(call domain.ToolCall) bool {
+	switch call.Name {
+	case "write", "edit", "apply_patch":
+	default:
+		return false
+	}
+	var targets []string
+	if p, ok := call.Arguments["path"].(string); ok {
+		targets = append(targets, p)
+	}
+	if patch, ok := call.Arguments["patch"].(string); ok {
+		targets = append(targets, patch)
+	}
+	lower := strings.ToLower(strings.Join(targets, " "))
+	for _, ext := range databaseExtensions {
+		if strings.Contains(lower, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+// isOutsideWorkspace detecta lectura/escritura fuera del directorio de trabajo
+// (equivalente opencode external_directory / codex writable_roots).
+func (s *Service) isOutsideWorkspace(call domain.ToolCall) bool {
+	switch call.Name {
+	case "read", "read_many_files", "glob", "grep", "write", "edit":
+	default:
+		return false
+	}
+	var targets []string
+	if p, ok := call.Arguments["path"].(string); ok {
+		targets = append(targets, p)
+	}
+	if paths, ok := call.Arguments["paths"].([]any); ok {
+		for _, v := range paths {
+			if s, ok := v.(string); ok {
+				targets = append(targets, s)
+			}
+		}
+	}
+	if g, ok := call.Arguments["pattern"].(string); ok {
+		targets = append(targets, g)
+	}
+	if r, ok := call.Arguments["root"].(string); ok {
+		targets = append(targets, r)
+	}
+	if s.workspace == "" {
+		return false
+	}
+	wsClean := filepath.Clean(s.workspace)
+	for _, t := range targets {
+		t = strings.TrimSpace(t)
+		if t == "" || t == "." {
+			continue
+		}
+		if strings.Contains(t, "*") || strings.Contains(t, "?") {
+			// glob: comparar sobre el prefijo sin wildcards
+			t = globBase(t)
+			if t == "" || t == "." {
+				continue
+			}
+		}
+		// expandir ~ (home) — cualquier ruta ~ es fuera del workspace
+		if strings.HasPrefix(t, "~") {
+			return true
+		}
+		resolved := t
+		if !filepath.IsAbs(resolved) {
+			resolved = filepath.Join(s.workspace, resolved)
+		}
+		resolved = filepath.Clean(resolved)
+		rel, err := filepath.Rel(wsClean, resolved)
+		if err != nil {
+			continue
+		}
+		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+func globBase(pattern string) string {
+	idx := strings.IndexAny(pattern, "*?[{")
+	if idx < 0 {
+		return pattern
+	}
+	if idx == 0 {
+		return "."
+	}
+	return pattern[:idx]
 }
 
 func (s *Service) isSensitiveRead(call domain.ToolCall) bool {
