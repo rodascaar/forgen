@@ -11,28 +11,47 @@ linters:
     - gosec
     - unconvert
     - prealloc
+    - modernize
+    - gocritic
+    - errorlint
+    - nilerr
   disable:
     - funlen
     - gocognit
-    # misspell y revive se omiten: el código y sus comentarios están en
-    # español, y ambos linters generan decenas de falsos positivos.
     - misspell
     - revive
   settings:
     gosec:
       excludes:
-        # Comportamiento intencional de un agente de código:
-        # - ejecutar subprocesos (G204)
-        # - leer/escribir archivos del workspace por ruta (G304)
-        # - permisos 0755/0644 en archivos del workspace (G301, G306)
-        # - nombres de campos de config de api_key (G101)
-        # - lectura dentro de WalkDir en búsqueda (G122)
         - G204
         - G304
         - G301
         - G306
-        - G101
         - G122
+        - G101
+    modernize:
+      enable-all: true
+    gocritic:
+      enable-all: true
+      disabled-checks:
+        - hugeParam
+        - importShadow
+        - paramTypeCombine
+        - rangeValCopy
+        - builtinShadow
+        - builtinShadowDecl
+        - ifElseChain
+        - evalOrder
+        - assignOp
+        - unnamedResult
+        - httpNoBody
+        - octalLiteral
+        - truncateCmp
+        - unlambda
+        - appendAssign
+    errorlint:
+      errorf: true
+      asserts: true
 
 issues:
   max-same-issues: 0

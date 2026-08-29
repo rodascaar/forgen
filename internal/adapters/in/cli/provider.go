@@ -152,7 +152,7 @@ func runProviderList(ctx context.Context, app *apppkg.App) error {
 	for _, provider := range config.Providers {
 		cred := "sin key"
 		if _, err := app.Credentials.Get(ctx, apppkg.ProviderCredentialKey(provider.Name)); err == nil {
-			cred = "✓ key guardada"
+			cred = "✓ key guardada" //nolint:gosec:G101 // status label, not a credential
 		}
 		_, _ = fmt.Fprintf(os.Stdout, "  - %s (%s) %s — %s\n", provider.Name, provider.Type, provider.BaseURL, cred)
 	}

@@ -1,6 +1,7 @@
 package sandbox_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/rodascaar/forgen/internal/adapters/out/sandbox"
@@ -25,11 +26,11 @@ func TestDockerArgsConstruction(t *testing.T) {
 }
 
 func joinArgs(args []string) string {
-	result := ""
+	var result strings.Builder
 	for _, arg := range args {
-		result += arg + " "
+		result.WriteString(arg + " ")
 	}
-	return result
+	return result.String()
 }
 
 func contains(haystack, needle string) bool {

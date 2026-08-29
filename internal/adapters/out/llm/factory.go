@@ -3,6 +3,7 @@ package llm
 import (
 	"fmt"
 	"log/slog"
+	"maps"
 
 	"github.com/rodascaar/forgen/internal/core/domain"
 	"github.com/rodascaar/forgen/internal/core/ports"
@@ -39,9 +40,7 @@ func (f *Factory) CreateWithTags(config domain.ProviderConfig, getenv func(strin
 func (f *Factory) CreateWithKeyResolver(config domain.ProviderConfig, resolveKey func(domain.ProviderConfig) string, tags map[string]string) (ports.LLMProvider, error) {
 	apiKey := resolveKey(config)
 	client := NewClient(config.BaseURL, apiKey, f.logger)
-	for key, value := range tags {
-		client.ExtraHeaders[key] = value
-	}
+	maps.Copy(client.ExtraHeaders, tags)
 
 	switch config.Type {
 	case domain.ProviderTypeAnthropic:

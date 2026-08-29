@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 // FermentStatus es el estado de vida de un proyecto Ferment.
 type FermentStatus string
@@ -77,10 +80,9 @@ type Memory struct {
 
 // CurrentPhaseIndex devuelve el índice de la fase activa, o -1.
 func (f Ferment) CurrentPhaseIndex() int {
-	for index, phase := range f.Phases {
-		if phase.Status == PhaseStatusActive {
-			return index
-		}
+	idx := slices.IndexFunc(f.Phases, func(p Phase) bool { return p.Status == PhaseStatusActive })
+	if idx >= 0 {
+		return idx
 	}
 	return -1
 }
@@ -109,10 +111,5 @@ func (f Ferment) TotalSteps() int {
 
 // AllPhasesComplete indica si todas las fases están completadas.
 func (f Ferment) AllPhasesComplete() bool {
-	for _, phase := range f.Phases {
-		if phase.Status != PhaseStatusCompleted {
-			return false
-		}
-	}
-	return true
+	return slices.ContainsFunc(f.Phases, func(p Phase) bool { return p.Status != PhaseStatusCompleted }) == false
 }

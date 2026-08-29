@@ -141,11 +141,10 @@ func newMCPTestCmd(app *apppkg.App) *cobra.Command {
 				return fmt.Errorf("mcp %q no existe", name)
 			}
 			mgr := mcp.NewManager(app.ToolRegistry, app.Logger)
-			failures := mgr.Start(cmd.Context(), map[string]domain.MCPServerConfig{name: mcpCfg})
-			defer mgr.Close()
-			if len(failures) > 0 {
-				return failures[0]
+			if err := mgr.Start(cmd.Context(), map[string]domain.MCPServerConfig{name: mcpCfg}); err != nil {
+				return err
 			}
+			defer mgr.Close()
 			fmt.Printf("MCP %s OK — tools registradas\n", name)
 			for _, t := range app.ToolRegistry.ListTools() {
 				// filtrar por prefijo del server (heurística)

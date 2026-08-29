@@ -28,6 +28,7 @@ type sessionMeta struct {
 	Model             string    `json:"model"`
 	Agent             string    `json:"agent"`
 	StartedAt         time.Time `json:"started_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 	Summary           string    `json:"summary"`
 	CompactBoundary   int       `json:"compact_boundary,omitempty"`
 	CompactionCount   int       `json:"compaction_count,omitempty"`
@@ -153,6 +154,10 @@ func (s *JSONLStore) rewrite(session domain.Session, path string) error {
 }
 
 func writeMeta(file *os.File, session domain.Session) error {
+	updated := session.StartedAt
+	if len(session.Messages) > 0 {
+		updated = session.Messages[len(session.Messages)-1].CreatedAt
+	}
 	meta := sessionMeta{
 		Type:              metaRecordType,
 		ID:                session.ID,
@@ -161,6 +166,7 @@ func writeMeta(file *os.File, session domain.Session) error {
 		Model:             session.Model.ID,
 		Agent:             session.Agent,
 		StartedAt:         session.StartedAt,
+		UpdatedAt:         updated,
 		Summary:           session.Summary(),
 		CompactBoundary:   session.CompactBoundary,
 		CompactionCount:   session.CompactionCount,
@@ -279,7 +285,7 @@ func (s *JSONLStore) Load(_ context.Context, id string) (domain.Session, error) 
 }
 
 // List implementa ports.SessionStore.
-func (s *JSONLStore) List(_ context.Context, limit int) ([]domain.Session, error) {
+func (s *JSONLStore) List(ctx context.Context, limit int) ([]domain.Session, error) {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
 		return nil, err
@@ -300,14 +306,14 @@ func (s *JSONLStore) List(_ context.Context, limit int) ([]domain.Session, error
 			Model:             domain.Model{Provider: meta.Provider, ID: meta.Model},
 			Agent:             meta.Agent,
 			StartedAt:         meta.StartedAt,
-			UpdatedAt:         meta.StartedAt,
+			UpdatedAt:         meta.UpdatedAt,
 			SummaryCache:      meta.Summary,
 			CompactBoundary:   meta.CompactBoundary,
 			CompactionCount:   meta.CompactionCount,
 			CompactionSummary: meta.CompactionSummary,
 		})
 	}
-	sort.Slice(sessions, func(i, j int) bool { return sessions[i].StartedAt.After(sessions[j].StartedAt) })
+	sort.Slice(sessions, func(i, j int) bool { return sessions[i].UpdatedAt.After(sessions[j].UpdatedAt) })
 	if limit > 0 && len(sessions) > limit {
 		sessions = sessions[:limit]
 	}

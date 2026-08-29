@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/rodascaar/forgen/internal/core/domain"
 	"github.com/rodascaar/forgen/internal/core/ports"
@@ -26,6 +27,7 @@ const maxOutputChars = 30000
 
 // Registry implementa ports.ToolExecutor registrando herramientas.
 type Registry struct {
+	mu          sync.RWMutex
 	tools       []ToolDef
 	byName      map[string]ToolDef
 	fs          ports.FileSystem
@@ -61,17 +63,24 @@ func NewRegistry(fs ports.FileSystem, executor ports.Executor, git ports.Git, ou
 }
 
 func (r *Registry) register(tool ToolDef) {
+	if tool.Name == "" {
+		return
+	}
 	r.tools = append(r.tools, tool)
 	r.byName[tool.Name] = tool
 }
 
 // Register añade una herramienta externa al registro (ej. skills, MCP).
 func (r *Registry) Register(tool ToolDef) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.register(tool)
 }
 
 // SetOutputLimit actualiza el límite de salida enviada al modelo.
 func (r *Registry) SetOutputLimit(limit int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if limit > 0 {
 		r.outputLimit = limit
 	}
@@ -103,6 +112,8 @@ func NewGenericTool[ArgType any](name, description string, schema map[string]any
 
 // ListTools implementa ports.ToolExecutor.
 func (r *Registry) ListTools() []domain.Tool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	tools := make([]domain.Tool, 0, len(r.tools))
 	for _, tool := range r.tools {
 		if tool.Enabled() {
@@ -114,8 +125,16 @@ func (r *Registry) ListTools() []domain.Tool {
 
 // LookupTools implementa ports.ToolExecutor.
 func (r *Registry) LookupTools(names []string) []domain.Tool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	if len(names) == 0 {
-		return r.ListTools()
+		tools := make([]domain.Tool, 0, len(r.tools))
+		for _, tool := range r.tools {
+			if tool.Enabled() {
+				tools = append(tools, tool.Tool)
+			}
+		}
+		return tools
 	}
 	tools := make([]domain.Tool, 0, len(names))
 	for _, name := range names {
@@ -128,19 +147,30 @@ func (r *Registry) LookupTools(names []string) []domain.Tool {
 
 // Execute implementa ports.ToolExecutor.
 func (r *Registry) Execute(ctx context.Context, call domain.ToolCall) domain.ToolResult {
+	r.mu.RLock()
 	tool, ok := r.byName[call.Name]
+	limit := r.outputLimit
+	var hint string
+	if !ok {
+		names := make([]string, 0, len(r.tools))
+		for _, t := range r.tools {
+			names = append(names, t.Name)
+		}
+		hint = ". Tools disponibles: " + strings.Join(names, ", ")
+	}
+	r.mu.RUnlock()
 	if !ok {
 		// Error accionable: deja claro que NO es un fallo de forgen sino que el
 		// modelo intentó una tool que no existe, y sugiere cómo resolverlo.
 		return domain.ToolResult{
 			ToolCallID: call.ID,
 			OK:         false,
-			Error:      fmt.Errorf("herramienta %q no registrada%s%s", call.Name, shellHint(call.Name), availableToolsHint(r)),
+			Error:      fmt.Errorf("herramienta %q no registrada%s%s", call.Name, shellHint(call.Name), hint),
 		}
 	}
 	result := tool.Execute(ctx, call.Arguments)
 	result.ToolCallID = call.ID
-	result.Output = summarizeResult(result.Output, r.outputLimit)
+	result.Output = summarizeResult(result.Output, limit)
 	return result
 }
 
@@ -156,6 +186,8 @@ func shellHint(name string) string {
 
 // availableToolsHint lista las tools registradas para orientar al modelo.
 func availableToolsHint(r *Registry) string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	names := make([]string, 0, len(r.tools))
 	for _, t := range r.tools {
 		names = append(names, t.Name)
@@ -471,15 +503,22 @@ func (r *Registry) applyBeginPatch(ctx context.Context, patch string) domain.Too
 		if currentFile == "" || len(hunks) == 0 {
 			return
 		}
+		// validate path inside workspace
+		clean := filepath.Clean(currentFile)
+		if filepath.IsAbs(clean) || strings.HasPrefix(clean, "..") || strings.Contains(clean, ".."+string(filepath.Separator)) {
+			outputs = append(outputs, fmt.Sprintf("✗ %s: path fuera del workspace denegado", currentFile))
+			hunks = nil
+			return
+		}
 		content := strings.Join(hunks, "\n")
-		dir := filepath.Dir(currentFile)
+		dir := filepath.Dir(clean)
 		if dir != "." && dir != "" {
 			_, _ = r.executor.Execute(ctx, fmt.Sprintf("mkdir -p %q", dir), ".", nil)
 		}
-		if err := r.fs.Write(ctx, currentFile, []byte(content)); err != nil {
-			outputs = append(outputs, fmt.Sprintf("✗ %s: %v", currentFile, err))
+		if err := r.fs.Write(ctx, clean, []byte(content)); err != nil {
+			outputs = append(outputs, fmt.Sprintf("✗ %s: %v", clean, err))
 		} else {
-			outputs = append(outputs, fmt.Sprintf("✓ %s", currentFile))
+			outputs = append(outputs, fmt.Sprintf("✓ %s", clean))
 		}
 		hunks = nil
 	}
@@ -497,8 +536,10 @@ func (r *Registry) applyBeginPatch(ctx context.Context, patch string) domain.Too
 			hunks = []string{}
 		case strings.HasPrefix(line, "*** Delete File:"):
 			flush()
-			p := strings.TrimSpace(strings.TrimPrefix(line, "*** Delete File:"))
-			if _, err := r.executor.Execute(ctx, fmt.Sprintf("rm -f %q", p), ".", nil); err == nil {
+			p := filepath.Clean(strings.TrimSpace(strings.TrimPrefix(line, "*** Delete File:")))
+			if filepath.IsAbs(p) || strings.HasPrefix(p, "..") || strings.Contains(p, ".."+string(filepath.Separator)) {
+				outputs = append(outputs, fmt.Sprintf("✗ %s: delete fuera del workspace denegado", p))
+			} else if _, err := r.executor.Execute(ctx, fmt.Sprintf("rm -f %q", p), ".", nil); err == nil {
 				outputs = append(outputs, fmt.Sprintf("✗ eliminado %s", p))
 			}
 			currentFile = ""

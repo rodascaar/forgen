@@ -1,4 +1,4 @@
-.PHONY: build test test-race lint vet fmt dev install clean bench release
+.PHONY: build test test-race test-mem test-cover lint vet fmt dev install clean bench release
 
 BINARY := forgen
 MODULE := github.com/rodascaar/forgen
@@ -29,10 +29,13 @@ vet:
 	go vet ./...
 
 fmt:
-	gofmt -w .
+	gofmt -s -w .
 
 lint:
 	golangci-lint run ./...
+
+test-mem:
+	GOMEMLIMIT=1GiB GODEBUG=gctrace=1 go test -run TestSearch -count=1 -memprofile=mem.pprof ./internal/adapters/out/fs -bench BenchmarkSearch -benchmem 2>&1 | head -n 50
 
 dev:
 	go run ./cmd/forgen

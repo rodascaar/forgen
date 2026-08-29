@@ -1,6 +1,9 @@
 package domain
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 // ProviderType identifica el protocolo de un proveedor LLM.
 type ProviderType string
@@ -197,10 +200,9 @@ func (c AppConfig) UpsertProvider(provider ProviderConfig) AppConfig {
 
 // FindProvider localiza un proveedor por nombre.
 func (c AppConfig) FindProvider(name string) (ProviderConfig, bool) {
-	for _, provider := range c.Providers {
-		if provider.Name == name {
-			return provider, true
-		}
+	idx := slices.IndexFunc(c.Providers, func(p ProviderConfig) bool { return p.Name == name })
+	if idx >= 0 {
+		return c.Providers[idx], true
 	}
 	return ProviderConfig{}, false
 }

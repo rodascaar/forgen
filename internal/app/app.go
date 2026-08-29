@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -246,8 +247,19 @@ func NewApp(logger *slog.Logger) (*App, error) {
 
 	// Arrancar servidores MCP (no fatal si alguno falla).
 	mcpManager := mcp.NewManager(registry, logger)
-	for _, failure := range mcpManager.Start(context.Background(), appConfig.MCPServers) {
-		logger.Warn("mcp server no disponible", "err", failure)
+	if err := mcpManager.Start(context.Background(), appConfig.MCPServers); err != nil {
+		// Iterar sobre la cadena de errores unidos con errors.Join
+		var failures []error
+		for e := err; e != nil; e = errors.Unwrap(e) {
+			failures = append(failures, e)
+		}
+		// Si no se pudieron separar, usar el error completo
+		if len(failures) == 0 {
+			failures = append(failures, err)
+		}
+		for _, failure := range failures {
+			logger.Warn("mcp server no disponible", "err", failure)
+		}
 	}
 
 	return &App{
@@ -485,7 +497,26 @@ func isLocalEndpoint(baseURL string) bool {
 		return false
 	}
 	switch parsed.Hostname() {
-	case "localhost", "127.0.0.1", "::1":
+	case "localhost", "127.0.0.1", "::1", "host.docker.internal", "0.0.0.0", "ollama":
+		return true
+	}
+	host := parsed.Hostname()
+	if strings.HasPrefix(host, "192.168.") || strings.HasPrefix(host, "10.") || strings.HasPrefix(host, "127.") {
+		return true
+	}
+	if strings.HasPrefix(host, "172.") {
+		// 172.16.0.0/12 -> 172.16-31.*
+		parts := strings.Split(host, ".")
+		if len(parts) >= 2 {
+			var sec int
+			if _, err := fmt.Sscanf(parts[1], "%d", &sec); err == nil {
+				if sec >= 16 && sec <= 31 {
+					return true
+				}
+			}
+		}
+	}
+	if strings.HasSuffix(host, ".local") {
 		return true
 	}
 	return false
@@ -641,6 +672,26 @@ func (a *App) ResolveRunModel(ctx context.Context, prompt, overrideProvider, ove
 	orchestrator := orchestration.NewOrchestrator(appConfig, a.LLMFactory, a.providerAPIKey, a.Logger)
 	phase := orchestrator.Classify(prompt)
 	model := orchestrator.SelectFor(phase, prompt)
+	// Fallback chain: probar pool en orden hasta 3 modelos (como Claude Code fallbackModel)
+	pool := orchestrator.PoolForPhase(phase)
+	if len(pool) == 0 {
+		pool = []domain.Model{model}
+	}
+	var lastErr error
+	for i, candidate := range pool {
+		if i >= 3 {
+			break
+		}
+		provider, err := orchestrator.Provider(ctx, candidate)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		return candidate, provider, phase, nil
+	}
+	if lastErr != nil {
+		return domain.Model{}, nil, "", lastErr
+	}
 	provider, err := orchestrator.Provider(ctx, model)
 	if err != nil {
 		return domain.Model{}, nil, "", err

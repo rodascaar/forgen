@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"strings"
 
 	lspadapter "github.com/rodascaar/forgen/internal/adapters/out/lsp"
 	"github.com/rodascaar/forgen/internal/application/tools"
@@ -77,11 +78,11 @@ func (m *Manager) DiagnosticsFor(ctx context.Context, path string) string {
 	if err != nil || len(diags) == 0 {
 		return ""
 	}
-	var out string
+	var out strings.Builder
 	for _, d := range diags {
-		out += fmt.Sprintf("%s:%d:%d %s: %s\n", d.File, d.Line, d.Column, severityLabel(d.Severity), d.Message)
+		fmt.Fprintf(&out, "%s:%d:%d %s: %s\n", d.File, d.Line, d.Column, severityLabel(d.Severity), d.Message)
 	}
-	return out
+	return out.String()
 }
 
 // Syncer devuelve el sincronizador de documentos para el wrapper de FileSystem.
@@ -140,11 +141,11 @@ func (m *Manager) diagnosticsTool() tools.ToolDef {
 			if len(diagnostics) == 0 {
 				return domain.ToolResult{OK: true, Output: "(sin diagnósticos)"}
 			}
-			output := ""
+			var output strings.Builder
 			for _, diag := range diagnostics {
-				output += fmt.Sprintf("%s:%d:%d %s: %s\n", diag.File, diag.Line, diag.Column, severityLabel(diag.Severity), diag.Message)
+				fmt.Fprintf(&output, "%s:%d:%d %s: %s\n", diag.File, diag.Line, diag.Column, severityLabel(diag.Severity), diag.Message)
 			}
-			return domain.ToolResult{OK: true, Output: output}
+			return domain.ToolResult{OK: true, Output: output.String()}
 		},
 	}
 }
@@ -209,11 +210,11 @@ func (m *Manager) locationTool(name, description string, references bool) tools.
 			if len(locations) == 0 {
 				return domain.ToolResult{OK: true, Output: "(sin resultados)"}
 			}
-			output := ""
+			var output strings.Builder
 			for _, location := range locations {
-				output += fmt.Sprintf("%s:%d:%d\n", location.File, location.Line, location.Column)
+				fmt.Fprintf(&output, "%s:%d:%d\n", location.File, location.Line, location.Column)
 			}
-			return domain.ToolResult{OK: true, Output: output}
+			return domain.ToolResult{OK: true, Output: output.String()}
 		},
 	}
 }
@@ -263,11 +264,11 @@ func (m *Manager) implementationTool() tools.ToolDef {
 			if len(locs) == 0 {
 				return domain.ToolResult{OK: true, Output: "(sin resultados)"}
 			}
-			out := ""
+			var out strings.Builder
 			for _, l := range locs {
-				out += fmt.Sprintf("%s:%d:%d\n", l.File, l.Line, l.Column)
+				fmt.Fprintf(&out, "%s:%d:%d\n", l.File, l.Line, l.Column)
 			}
-			return domain.ToolResult{OK: true, Output: out}
+			return domain.ToolResult{OK: true, Output: out.String()}
 		},
 	}
 }
@@ -288,11 +289,11 @@ func (m *Manager) typeDefinitionTool() tools.ToolDef {
 			if len(locs) == 0 {
 				return domain.ToolResult{OK: true, Output: "(sin resultados)"}
 			}
-			out := ""
+			var out strings.Builder
 			for _, l := range locs {
-				out += fmt.Sprintf("%s:%d:%d\n", l.File, l.Line, l.Column)
+				fmt.Fprintf(&out, "%s:%d:%d\n", l.File, l.Line, l.Column)
 			}
-			return domain.ToolResult{OK: true, Output: out}
+			return domain.ToolResult{OK: true, Output: out.String()}
 		},
 	}
 }

@@ -9,7 +9,7 @@ import (
 func benchmarkMessages() []domain.Message {
 	messages := make([]domain.Message, 0, 50)
 	messages = append(messages, domain.NewTextMessage(domain.RoleSystem, "eres un agente de código"))
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		messages = append(messages,
 			domain.NewTextMessage(domain.RoleUser, "escribe una función que haga X"),
 			domain.NewAssistantWithToolCalls("voy a leer", []domain.ToolCall{

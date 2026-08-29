@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/rodascaar/forgen/internal/core/ports"
@@ -294,8 +295,8 @@ func (c *Client) applyWorkspaceEdit(result json.RawMessage) error {
 		}
 		lines := strings.Split(content, "\n")
 		// Aplicar ediciones de abajo hacia arriba para no desincronizar offsets.
-		for i := len(edits) - 1; i >= 0; i-- {
-			change := edits[i]
+		for _, change := range slices.Backward(edits) {
+
 			lines = applyTextEdit(lines, change.Range.Start.Line, change.Range.Start.Character,
 				change.Range.End.Line, change.Range.End.Character, change.NewText)
 		}

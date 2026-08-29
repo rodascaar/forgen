@@ -86,8 +86,8 @@ func (s *fakeLSPServer) readFrameLen() (int, error) {
 		if line == "" {
 			return length, nil
 		}
-		if strings.HasPrefix(line, "Content-Length:") {
-			length, _ = strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(line, "Content-Length:")))
+		if after, ok := strings.CutPrefix(line, "Content-Length:"); ok {
+			length, _ = strconv.Atoi(strings.TrimSpace(after))
 		}
 	}
 }

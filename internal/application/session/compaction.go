@@ -6,6 +6,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -122,8 +123,8 @@ func protectedIndices(session domain.Session) map[int]bool {
 	protected := make(map[int]bool)
 	// Proteger últimos PruneProtectTokens de tool outputs (recorrer desde el final).
 	acc := 0
-	for i := len(session.Messages) - 1; i >= 0; i-- {
-		m := session.Messages[i]
+	for i, v := range slices.Backward(session.Messages) {
+		m := v
 		if m.Role == domain.RoleTool {
 			if acc < PruneProtectTokens {
 				protected[i] = true
@@ -183,8 +184,8 @@ func VisibleMessages(session domain.Session) []domain.Message {
 	var out []domain.Message
 	if session.CompactBoundary > 0 && session.CompactionSummary != "" {
 		summaryMsg := domain.Message{
-			Role:    domain.RoleSystem,
-			Content: []domain.ContentPart{{Type: "text", Text: summaryPrefix(session.CompactionSummary)}},
+			Role:      domain.RoleSystem,
+			Content:   []domain.ContentPart{{Type: "text", Text: summaryPrefix(session.CompactionSummary)}},
 			CreatedAt: time.Now(),
 		}
 		// Marcar como summary para que storage no lo re-prune.
@@ -338,14 +339,8 @@ func (c *CompactionService) Summarize(ctx context.Context, session domain.Sessio
 func ApplyCompaction(session domain.Session, summary string) domain.Session {
 	// Boundary = índice desde donde se conserva tail (después de pruning, tail = protegidos + recientes).
 	// Heurística: conservar últimos 20 mensajes como tail (coherente con PruneProtectTokens).
-	tail := 20
-	if len(session.Messages) < tail {
-		tail = len(session.Messages)
-	}
-	session.CompactBoundary = len(session.Messages) - tail
-	if session.CompactBoundary < 0 {
-		session.CompactBoundary = 0
-	}
+	tail := min(len(session.Messages), 20)
+	session.CompactBoundary = max(len(session.Messages)-tail, 0)
 	session.CompactionSummary = strings.TrimSpace(summary)
 	session.CompactionCount++
 	return session

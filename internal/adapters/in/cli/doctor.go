@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	apppkg "github.com/rodascaar/forgen/internal/app"
 	"github.com/rodascaar/forgen/internal/core/domain"
@@ -36,7 +37,7 @@ func runDoctor(ctx context.Context, app *apppkg.App) error {
 		report.line("  proveedor/modelo: %s/%s", config.Default.Provider, config.Default.Model)
 		report.line("  modo de permisos: %s", config.Permissions.Mode)
 		for _, provider := range config.Providers {
-			report.checkProvider(provider)
+			report.checkProviderWithApp(app, provider)
 		}
 	}
 
@@ -116,22 +117,30 @@ func (r *diagnosticReport) fail(format string, args ...any) {
 	r.lines = append(r.lines, "✗ "+fmt.Sprintf(format, args...))
 }
 
-func (r *diagnosticReport) checkProvider(provider domain.ProviderConfig) {
-	keySet := provider.APIKeyEnv == "" || os.Getenv(provider.APIKeyEnv) != ""
-	if keySet {
-		r.ok("proveedor %s (%s) con key configurada", provider.Name, provider.Type)
+// checkProviderWithApp usa CredentialStore + isLocal para diagnóstico preciso.
+func (r *diagnosticReport) checkProviderWithApp(app *apppkg.App, provider domain.ProviderConfig) {
+	if app.ProviderUsable(provider) {
+		if app.HasCredential(provider) {
+			r.ok("proveedor %s (%s) con key configurada (keychain/env)", provider.Name, provider.Type)
+		} else {
+			r.ok("proveedor %s (%s) endpoint local sin key (ollama) — usable", provider.Name, provider.Type)
+		}
+		return
+	}
+	if provider.APIKeyEnv == "" {
+		r.warn("proveedor %s (%s): sin API key y sin endpoint local", provider.Name, provider.Type)
 	} else {
-		r.warn("proveedor %s (%s): la variable %q no está definida",
+		r.warn("proveedor %s (%s): la variable %q no está definida y sin key en keychain",
 			provider.Name, provider.Type, provider.APIKeyEnv)
 	}
 }
 
 func (r *diagnosticReport) String() string {
-	result := ""
+	var result strings.Builder
 	for _, line := range r.lines {
-		result += line + "\n"
+		result.WriteString(line + "\n")
 	}
-	return result
+	return result.String()
 }
 
 func isAvailable(name string) bool {

@@ -134,13 +134,6 @@ func runDeleteSession(ctx context.Context, app *apppkg.App, sessionID string) er
 	return nil
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // resolveModelFromConfig deriva un modelo (provider/id) desde la config efectiva.
 func resolveModelFromConfig(cfg domain.AppConfig) domain.Model {
 	provider := cfg.Default.Provider

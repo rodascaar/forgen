@@ -201,7 +201,9 @@ func (e *Executor) Cancel(ctx context.Context, taskID string) error {
 		return fmt.Errorf("la tarea ya ha terminado: %s", t.Status)
 	}
 	t.MarkCancelled()
-	return e.store.Save(context.Background(), t)
+	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	return e.store.Save(saveCtx, t)
 }
 
 func (e *Executor) GetStatus(ctx context.Context, taskID string) (domain.TaskStatus, error) {

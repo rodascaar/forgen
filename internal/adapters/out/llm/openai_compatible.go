@@ -241,6 +241,7 @@ type openAIToolAccumulator struct {
 	toolCalls  map[int]*pendingCall
 	order      []int
 	finishSeen bool
+	lengthSeen bool
 	logger     *slog.Logger
 }
 
@@ -282,8 +283,14 @@ func (a *openAIToolAccumulator) process(chunk openAIChunk) error {
 				}
 			}
 		}
-		if choice.FinishReason != nil && *choice.FinishReason == "tool_calls" {
-			a.finishSeen = true
+		if choice.FinishReason != nil {
+			switch *choice.FinishReason {
+			case "tool_calls":
+				a.finishSeen = true
+			case "length":
+				a.finishSeen = false
+				a.lengthSeen = true
+			}
 		}
 	}
 	if chunk.Usage != nil {
@@ -314,6 +321,8 @@ func (a *openAIToolAccumulator) finish() error {
 	reason := domain.FinishReasonStop
 	if a.finishSeen {
 		reason = domain.FinishReasonToolCalls
+	} else if a.lengthSeen {
+		reason = domain.FinishReasonMaxTokens
 	}
 	return a.handler(ports.DoneEvent{Reason: reason})
 }

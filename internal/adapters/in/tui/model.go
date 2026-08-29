@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/common-nighthawk/go-figure"
 	apppkg "github.com/rodascaar/forgen/internal/app"
 	"github.com/rodascaar/forgen/internal/application/agent"
+	"github.com/rodascaar/forgen/internal/application/session"
 	"github.com/rodascaar/forgen/internal/core/domain"
 )
 
@@ -37,9 +39,9 @@ type transcriptLine struct {
 // collapseThresholdChars: respuestas del asistente más largas se colapsan.
 const collapseThresholdChars = 500
 
-// slashHelpText resume los comandos disponibles dentro de la TUI.
-const slashHelpText = `Comandos: /init configura tu proveedor y API key · /search activa la búsqueda web (Brave) · /help esta ayuda · /quit sale
-Atajos: Enter envía · Tab cambia agente · PgUp/PgDn o rueda del ratón desplazan · Ctrl+C cancela / salir (2×) · /todo /mcp /help`
+// slashHelpText resume los comandos disponibles dentro de la TUI. Fuente única para README.
+const slashHelpText = `Comandos: /init /search /provider /model /sessions /new /resume /todo /plan /task /mcp /orchestration /diff /commit /review /test /lint /fix /pr /compact /context /trace /undo /retry /reasoning /copy /help /quit
+Atajos: Enter envía · Tab build↔plan · Ctrl+P plan · Ctrl+M mcp · Ctrl+H ayuda · PgUp/PgDn rueda desplaza · Ctrl+C cancela · Ctrl+O colapsa`
 
 // grsprkLogo es la identidad ASCII de forgen (fuente block de go-figure, solo
 // ASCII: sin caracteres box-drawing que causaban artefactos/desalineación). Se
@@ -311,17 +313,22 @@ func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && (s[0:len(substr)] == substr || contains(s[1:], substr)))
 }
 
+// orchModelsMsg entrega modelos en vivo para overlay async.
+type orchModelsMsg struct {
+	models []string
+}
+
 // openOrchestrationOverlay abre el overlay de routing multi-modelo: muestra el
 // estado de Auto y los modelos disponibles del proveedor por defecto (listado
-// en vivo), con los del pool preseleccionados.
-func (m *Model) openOrchestrationOverlay() {
+// en vivo), con los del pool preseleccionados. Fetch async con spinner.
+func (m *Model) openOrchestrationOverlay() (tea.Model, tea.Cmd) {
 	ctx := context.Background()
 	m.orchAuto = false
 	m.orchPool = map[string]bool{}
 	appConfig, err := m.app.LoadConfig(ctx)
 	if err != nil {
 		m.append("error", fmt.Sprintf("Error: %v", err))
-		return
+		return m, nil
 	}
 	m.orchAuto = appConfig.Orchestration.Auto
 	for _, key := range appConfig.Orchestration.Pool {
@@ -329,9 +336,20 @@ func (m *Model) openOrchestrationOverlay() {
 			m.orchPool[key] = true
 		}
 	}
+	// Show overlay immediately with cached models, fetch live async
 	m.orchModels = m.app.OrchestrationModels(ctx)
+	if len(m.orchModels) == 0 {
+		m.orchModels = []string{"(cargando modelos...)"}
+	}
 	m.orchCursor = 0
 	m.showOrch = true
+	fetch := func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		models := m.app.OrchestrationModels(ctx)
+		return orchModelsMsg{models: models}
+	}
+	return m, fetch
 }
 
 // toggleOrchModel marca/desmarca un modelo en el pool y persiste. Un pool vacío
@@ -442,6 +460,12 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case orchModelsMsg:
+		if m.showOrch && len(typedMessage.models) > 0 {
+			m.orchModels = typedMessage.models
+		}
+		return m, nil
+
 	case searchDoneMsg, searchCancelMsg:
 		m.search = nil
 		return m, nil
@@ -505,6 +529,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.resetConfirm()
 		m.running = false
 		m.cancelRequested = false
+		if m.cancelRun != nil {
+			m.cancelRun()
+			m.cancelRun = nil
+		}
 		return m, nil
 
 	case finishedMsg:
@@ -513,6 +541,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.running = false
 		m.cancelRequested = false
 		m.scrollOffset = 0
+		if m.cancelRun != nil {
+			m.cancelRun()
+			m.cancelRun = nil
+		}
 		// P1: cierra el turno del asistente con separador.
 		m.append("divider", "")
 		return m, nil
@@ -534,6 +566,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.running = false
 		m.cancelRequested = false
 		m.scrollOffset = 0
+		if m.cancelRun != nil {
+			m.cancelRun()
+			m.cancelRun = nil
+		}
 		// P3: colapsa respuestas largas para reducir scroll.
 		m.maybeCollapseLastAssistant()
 		// P1: cierra el turno del asistente con separador.
@@ -592,14 +628,8 @@ func (m *Model) scrollBy(delta int) {
 	if m.scrollOffset < 0 {
 		m.scrollOffset = 0
 	}
-	limit := m.height - 5
-	if limit < 5 {
-		limit = 5
-	}
-	maxOffset := len(m.wrappedLines()) - limit
-	if maxOffset < 0 {
-		maxOffset = 0
-	}
+	limit := max(m.height-5, 5)
+	maxOffset := max(len(m.wrappedLines())-limit, 0)
 	if m.scrollOffset > maxOffset {
 		m.scrollOffset = maxOffset
 	}
@@ -811,8 +841,7 @@ func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.running = true
 		m.assistantBuffer = ""
 		m.cancelRequested = false
-		ctx, cancel := context.WithCancel(context.Background())
-		m.cancelRun = cancel
+		ctx, _ := m.newRunContext()
 		return m, m.startRun(ctx, prompt)
 
 	case "up":
@@ -874,8 +903,7 @@ func (m Model) handleSlash(command string) (tea.Model, tea.Cmd) {
 		m.running = true
 		m.assistantBuffer = ""
 		m.cancelRequested = false
-		ctx, cancel := context.WithCancel(context.Background())
-		m.cancelRun = cancel
+		ctx, _ := m.newRunContext()
 		return m, m.startRun(ctx, m.lastPrompt)
 	case "/todo", "/plan":
 		m.loadTodoList()
@@ -889,8 +917,7 @@ func (m Model) handleSlash(command string) (tea.Model, tea.Cmd) {
 		m.showMCP = true
 		return m, nil
 	case "/orchestration", "/orch":
-		m.openOrchestrationOverlay()
-		return m, nil
+		return m.openOrchestrationOverlay()
 	case "/diff":
 		diff, _ := m.app.Git.Diff(context.Background(), ".", false)
 		if diff == "" {
@@ -912,34 +939,30 @@ func (m Model) handleSlash(command string) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "/review":
 		m.append("notice", "Iniciando review — delegando a sub-agente review…")
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, _ := m.newRunContext()
 		m.running = true
 		m.assistantBuffer = ""
-		m.cancelRun = cancel
 		return m, m.startRun(ctx, "Haz un code review del diff actual: busca bugs, seguridad, estilo y sugiere mejoras")
 	case "/pr":
 		m.append("notice", "Creando PR — ejecuta 'gh pr create' o 'git push && gh pr create'")
 		return m, nil
 	case "/test":
 		m.append("notice", "Ejecutando tests…")
-		ctx2, cancel2 := context.WithCancel(context.Background())
+		ctx2, _ := m.newRunContext()
 		m.running = true
 		m.assistantBuffer = ""
-		m.cancelRun = cancel2
 		return m, m.startRun(ctx2, "Ejecuta los tests relevantes (go test ./... -run <relacionado> o npm test) y reporta fallos")
 	case "/lint":
 		m.append("notice", "Ejecutando linters…")
-		ctx3, cancel3 := context.WithCancel(context.Background())
+		ctx3, _ := m.newRunContext()
 		m.running = true
 		m.assistantBuffer = ""
-		m.cancelRun = cancel3
 		return m, m.startRun(ctx3, "Ejecuta golangci-lint run ./... (o el linter configurado) y reporta issues")
 	case "/fix":
 		m.append("notice", "Auto-fix — delegando a sub-agente build…")
-		ctx4, cancel4 := context.WithCancel(context.Background())
+		ctx4, _ := m.newRunContext()
 		m.running = true
 		m.assistantBuffer = ""
-		m.cancelRun = cancel4
 		return m, m.startRun(ctx4, "Corrige automáticamente los errores de lint/test y valida con go vet")
 	case "/compact":
 		if m.sessionID == "" {
@@ -951,10 +974,9 @@ func (m Model) handleSlash(command string) (tea.Model, tea.Cmd) {
 			focus = strings.Join(fields[1:], " ")
 		}
 		m.append("notice", "Compactando sesión... (prune + LLM summary)")
-		ctx2, cancel2 := context.WithCancel(context.Background())
+		ctx2, _ := m.newRunContext()
 		m.running = true
 		m.assistantBuffer = ""
-		m.cancelRun = cancel2
 		return m, m.startCompact(ctx2, focus)
 	case "/context":
 		if m.sessionID == "" {
@@ -1256,6 +1278,17 @@ func (m *Model) toggleAgent() {
 	m.agentName = "build"
 }
 
+// newRunContext crea un contexto cancelable para un run, cancelando el previo si existe.
+func (m *Model) newRunContext() (context.Context, context.CancelFunc) {
+	if m.cancelRun != nil {
+		m.cancelRun()
+		m.cancelRun = nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancelRun = cancel
+	return ctx, cancel
+}
+
 func (m Model) startCompact(ctx context.Context, focus string) tea.Cmd {
 	return func() tea.Msg {
 		sess, err := m.app.SessionService.Resume(ctx, m.sessionID)
@@ -1297,10 +1330,7 @@ func (m Model) startCompact(ctx context.Context, focus string) tea.Cmd {
 // compactContextLine formatea /context para TUI.
 func compactContextLine(sess domain.Session, app *apppkg.App) string {
 	appConfig, _ := app.LoadConfig(context.Background())
-	tokens := 0
-	for _, msg := range sess.Messages {
-		tokens += len(msg.Text())/4 + 4
-	}
+	tokens := session.SessionTokens(sess)
 	limit := 128000
 	if md, ok := appConfig.ModelMetadata[sess.Model.Key()]; ok && md.ContextLimit > 0 {
 		limit = md.ContextLimit
@@ -1430,10 +1460,7 @@ func (m Model) View() string {
 
 	// Reserve -5: 1 línea de status + 1 separador en blanco + 3 del input box.
 	// Dejar siempre una fila de respiro antes del input evita que el log lo tape.
-	availableHeight := m.height - 5
-	if availableHeight < 5 {
-		availableHeight = 5
-	}
+	availableHeight := max(m.height-5, 5)
 	body := m.renderTranscript(availableHeight)
 	status := m.renderStatus()
 	inputLine := m.renderInput()
@@ -1450,10 +1477,7 @@ func (m Model) renderTranscript(limit int) string {
 		return m.styles.dim.Render(" (sin conversación) ")
 	}
 
-	maxOffset := len(wrapped) - limit
-	if maxOffset < 0 {
-		maxOffset = 0
-	}
+	maxOffset := max(len(wrapped)-limit, 0)
 	if m.scrollOffset > maxOffset {
 		m.scrollOffset = maxOffset
 	}
@@ -1517,8 +1541,9 @@ func collapseHeader(text string) string {
 // maybeCollapseLastAssistant colapsa la última respuesta del asistente si es larga.
 func (m *Model) maybeCollapseLastAssistant() {
 	for i := len(m.transcript) - 1; i >= 0; i-- {
-		if m.transcript[i].kind == "assistant" && len(m.transcript[i].text) > collapseThresholdChars {
-			m.transcript[i].collapsed = true
+		v := &m.transcript[i]
+		if v.kind == "assistant" && len(v.text) > collapseThresholdChars {
+			v.collapsed = true
 			return
 		}
 	}
@@ -1527,8 +1552,9 @@ func (m *Model) maybeCollapseLastAssistant() {
 // toggleLastAssistantColapse alterna colapso de la respuesta más reciente (Ctrl+O).
 func (m *Model) toggleLastAssistantColapse() {
 	for i := len(m.transcript) - 1; i >= 0; i-- {
-		if m.transcript[i].kind == "assistant" {
-			m.transcript[i].collapsed = !m.transcript[i].collapsed
+		v := &m.transcript[i]
+		if v.kind == "assistant" {
+			v.collapsed = !v.collapsed
 			return
 		}
 	}
@@ -1653,13 +1679,10 @@ func (m Model) renderStatus() string {
 	} else if m.noConfig {
 		right = m.styles.notice.Render("sin configurar — escribe /init")
 	} else {
-		right = m.styles.dim.Render("/ comandos · Tab agente · rueda/PgUp desplaza")
+		right = m.styles.dim.Render("Ctrl+P plan · Ctrl+M mcp · Ctrl+H ayuda · / comandos · Tab agente · PgUp/PgDn")
 	}
 	if m.width > 0 {
-		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
-		if gap < 1 {
-			gap = 1
-		}
+		gap := max(m.width-lipgloss.Width(left)-lipgloss.Width(right)-2, 1)
 		return left + strings.Repeat(" ", gap) + right
 	}
 	return left + "  " + right
@@ -1748,9 +1771,9 @@ func (m *Model) lastAssistantText() string {
 	if m.assistantBuffer != "" {
 		return m.assistantBuffer
 	}
-	for i := len(m.transcript) - 1; i >= 0; i-- {
-		if m.transcript[i].kind == "assistant" {
-			return m.transcript[i].text
+	for _, v := range slices.Backward(m.transcript) {
+		if v.kind == "assistant" {
+			return v.text
 		}
 	}
 	return ""

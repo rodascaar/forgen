@@ -203,7 +203,7 @@ func parseFrontmatter(content string) (map[string]any, string) {
 	}
 	// parts[1] es YAML frontmatter simple (parse manual sin yaml lib para evitar dependencia)
 	fm := make(map[string]any)
-	for _, line := range strings.Split(parts[1], "\n") {
+	for line := range strings.SplitSeq(parts[1], "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -218,7 +218,7 @@ func parseFrontmatter(content string) (map[string]any, string) {
 		if strings.HasPrefix(v, "[") && strings.HasSuffix(v, "]") {
 			inner := strings.Trim(v, "[]")
 			var arr []any
-			for _, item := range strings.Split(inner, ",") {
+			for item := range strings.SplitSeq(inner, ",") {
 				item = strings.TrimSpace(strings.Trim(item, "\"' "))
 				if item != "" {
 					arr = append(arr, item)

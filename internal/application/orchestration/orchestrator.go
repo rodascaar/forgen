@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
@@ -74,20 +75,32 @@ func (o *Orchestrator) IsMultiModel() bool {
 	return len(seen) > 1
 }
 
+// normalizePrompt lowercases and strips accents for classify (es -> en tolerant).
+func normalizePrompt(s string) string {
+	s = strings.ToLower(s)
+	// light accent folding without x/text dep: replace common
+	repl := strings.NewReplacer(
+		"á", "a", "é", "e", "í", "i", "ó", "o", "ú", "u",
+		"à", "a", "è", "e", "ì", "i", "ò", "o", "ù", "u",
+		"ñ", "n",
+	)
+	return repl.Replace(s)
+}
+
 // Classify clasifica un prompt en una fase por heurística determinista.
 func (o *Orchestrator) Classify(prompt string) domain.AgentPhase {
-	lower := strings.ToLower(prompt)
+	lower := normalizePrompt(prompt)
 
-	if containsAny(lower, "explica", "cómo funciona", "entender", "revisa el código", "analiza", "explora", "qué hace") {
+	if containsAny(lower, "explica", "como funciona", "entender", "revisa el codigo", "analiza", "explora", "que hace") {
 		return domain.PhaseExplore
 	}
-	if containsAny(lower, "plan", "diseñ", "arquitectura", "especific", "pasos", "estrategia", "spec") {
+	if containsAny(lower, "plan", "disen", "arquitectura", "especific", "pasos", "estrategia", "spec") {
 		return domain.PhasePlan
 	}
-	if containsAny(lower, "review", "revisa mi", "audita", "encuentra bugs", "pr", "code review") {
+	if containsAny(lower, "review", "revisa mi", "audita", "encuentra bugs", "code review") || containsPR(lower) {
 		return domain.PhaseReview
 	}
-	if containsAny(lower, "investiga", "busca", "documentación", "research", "última versión", "cómo se usa") {
+	if containsAny(lower, "investiga", "busca", "documentacion", "research", "ultima version", "como se usa") {
 		return domain.PhaseResearch
 	}
 	return domain.PhaseBuild
@@ -103,6 +116,20 @@ func (o *Orchestrator) SelectFor(phase domain.AgentPhase, prompt string) domain.
 	o.phase = phase
 	o.model = o.pickFromPool(pool, prompt)
 	return o.model
+}
+
+// PoolForPhase devuelve el pool ordenado por tier para fallback.
+func (o *Orchestrator) PoolForPhase(phase domain.AgentPhase) []domain.Model {
+	role := roleForPhase(phase)
+	pool := o.roleModels(role)
+	if len(pool) == 0 {
+		return []domain.Model{o.defaultModel()}
+	}
+	sorted := slices.Clone(pool)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		return tierWeight(o.tierOf(sorted[i])) < tierWeight(o.tierOf(sorted[j]))
+	})
+	return sorted
 }
 
 // Provider crea el provider para el modelo con tags de fase/modelo.
@@ -191,8 +218,7 @@ func (o *Orchestrator) pickFromPool(pool []domain.Model, prompt string) domain.M
 		return pool[0]
 	}
 	score := complexityScore(prompt)
-	sorted := make([]domain.Model, len(pool))
-	copy(sorted, pool)
+	sorted := slices.Clone(pool)
 	sort.SliceStable(sorted, func(i, j int) bool {
 		return tierWeight(o.tierOf(sorted[i])) < tierWeight(o.tierOf(sorted[j]))
 	})
@@ -305,6 +331,20 @@ func containsAny(text string, keywords ...string) bool {
 		if strings.Contains(text, keyword) {
 			return true
 		}
+	}
+	return false
+}
+
+func containsPR(text string) bool {
+	// word boundary for "pr" to avoid matching "propiedad"
+	if text == "pr" {
+		return true
+	}
+	if strings.Contains(text, " pr ") || strings.HasPrefix(text, "pr ") || strings.HasSuffix(text, " pr") {
+		return true
+	}
+	if strings.Contains(text, "pr:") || strings.Contains(text, "pr-") {
+		return true
 	}
 	return false
 }

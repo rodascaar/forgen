@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	apppkg "github.com/rodascaar/forgen/internal/app"
+	"github.com/rodascaar/forgen/internal/application/session"
 	"github.com/spf13/cobra"
 )
 
@@ -101,10 +102,7 @@ func newContextCommand(app *apppkg.App) *cobra.Command {
 				appConfig, _ = app.LoadConfig(cmd.Context())
 			}
 			// Estimar tokens
-			tokens := 0
-			for _, m := range sess.Messages {
-				tokens += len(m.Text())/4 + 4
-			}
+			tokens := session.SessionTokens(sess)
 			limit := 128000
 			if md, ok := appConfig.ModelMetadata[sess.Model.Key()]; ok && md.ContextLimit > 0 {
 				limit = md.ContextLimit

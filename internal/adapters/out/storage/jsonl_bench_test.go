@@ -14,7 +14,7 @@ func benchmarkSession() domain.Session {
 		Model:     domain.Model{Provider: "openai", ID: "gpt-5"},
 		Agent:     "build",
 	}
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		session.Messages = append(session.Messages,
 			domain.NewTextMessage(domain.RoleUser, "explícame este código con detalle y contexto"),
 			domain.NewAssistantWithToolCalls("voy a leer el archivo", []domain.ToolCall{

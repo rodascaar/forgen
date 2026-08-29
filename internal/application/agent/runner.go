@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -232,11 +233,10 @@ func (r *Runner) callLLM(ctx context.Context, sessionID string, model domain.Mod
 	messages []domain.Message, tools []domain.Tool, phase domain.AgentPhase) (llmResponse, error) {
 	var response llmResponse
 	var mutex sync.Mutex
+	var builder strings.Builder
+	builder.Grow(8192)
 	// Token budget & cost guard (7.6.3) — estima y warn si >80%
-	budgetTokens := 0
-	for _, m := range messages {
-		budgetTokens += len(m.Text())/4 + 4
-	}
+	budgetTokens := session.SessionTokens(domain.Session{Messages: messages})
 	if budgetTokens > 90000 {
 		r.logger.Warn("token.budget_high", "session", sessionID, "tokens", budgetTokens, "hint", "consider /compact or fresh session")
 		r.messenger.Notice(sessionID, fmt.Sprintf("⚠ Tokens altos: %d — considera /compact o sesión nueva para ahorrar coste", budgetTokens))
@@ -258,7 +258,7 @@ func (r *Runner) callLLM(ctx context.Context, sessionID string, model domain.Mod
 		switch typedEvent := event.(type) {
 		case ports.TextDeltaEvent:
 			mutex.Lock()
-			response.text += typedEvent.Text
+			builder.WriteString(typedEvent.Text)
 			mutex.Unlock()
 			r.messenger.StreamText(sessionID, typedEvent.Text)
 		case ports.ToolCallEvent:
@@ -281,6 +281,9 @@ func (r *Runner) callLLM(ctx context.Context, sessionID string, model domain.Mod
 	if err != nil {
 		return llmResponse{}, fmt.Errorf("llm %s/%s: %w", model.Provider, model.ID, err)
 	}
+	mutex.Lock()
+	response.text = builder.String()
+	mutex.Unlock()
 	if response.toolCallCount > 0 && len(response.toolCalls) != response.toolCallCount {
 		return llmResponse{}, errors.New("llm: llamadas a herramientas incompletas en el streaming")
 	}
@@ -541,31 +544,7 @@ func (r *Runner) buildMessages(systemPrompt string, session domain.Session) []do
 }
 
 func (r *Runner) compactedVisible(s domain.Session) []domain.Message {
-	// Si hay summary+boundary, colapsar.
-	if s.CompactBoundary > 0 && s.CompactionSummary != "" {
-		boundary := s.CompactBoundary
-		if boundary < 0 {
-			boundary = 0
-		}
-		if boundary > len(s.Messages) {
-			boundary = len(s.Messages)
-		}
-		var out []domain.Message
-		summary := "Another language model started to solve this task and produced a summary. Use it to build on work already done and avoid duplicating effort.\n\n## Session Summary (compacted)\n" + strings.TrimSpace(s.CompactionSummary)
-		out = append(out, domain.Message{
-			Role:    domain.RoleSystem,
-			Content: []domain.ContentPart{{Type: "text", Text: summary}},
-		})
-		for i := boundary; i < len(s.Messages); i++ {
-			out = append(out, r.projectMessage(s.Messages[i]))
-		}
-		return out
-	}
-	var out []domain.Message
-	for _, m := range s.Messages {
-		out = append(out, r.projectMessage(m))
-	}
-	return out
+	return session.VisibleMessages(s)
 }
 
 func (r *Runner) projectMessage(m domain.Message) domain.Message {
@@ -574,7 +553,7 @@ func (r *Runner) projectMessage(m domain.Message) domain.Message {
 			Role:       m.Role,
 			ToolCallID: m.ToolCallID,
 			ToolName:   m.ToolName,
-			Content:    []domain.ContentPart{{Type: "text", Text: "[tool result cleared — use read/grep to re-fetch if needed]"}},
+			Content:    []domain.ContentPart{{Type: "text", Text: session.SummaryPlaceholder}},
 			CreatedAt:  m.CreatedAt,
 		}
 	}
@@ -682,57 +661,30 @@ func (r *Runner) maybeCompactForced(ctx context.Context, sess *domain.Session, f
 	return nil
 }
 
-// Helpers locales sin importar session/compaction cycle (Runner está en otro paquete).
+// Helpers locales — ahora alias deprecados hacia session (centralizado, evita drift).
+// Se mantienen por compatibilidad 1 tag; preferir session.IsOverflow etc.
 func isOverflowLocal(s domain.Session, model domain.Model, md map[string]domain.ModelMetadata, threshold float64) bool {
-	limit := 128000
-	if m, ok := md[model.Key()]; ok && m.ContextLimit > 0 {
-		limit = m.ContextLimit
-	}
-	reserved := 4096
-	if m, ok := md[model.Key()]; ok && m.MaxOutput > 0 {
-		reserved = m.MaxOutput
-	}
-	usable := limit - reserved
-	if usable <= 0 {
-		usable = limit
-	}
-	budget := int(float64(usable) * threshold)
-	tokens := 0
-	for _, msg := range s.Messages {
-		tokens += 4
-		for _, p := range msg.Content {
-			tokens += len(p.Text)/4 + 1
-			if p.Call != nil {
-				tokens += len(p.Call.Name)/4 + 1
-			}
-		}
-	}
-	return tokens >= budget
+	return session.IsOverflow(s, model, md, threshold)
 }
 
 func needsPruneLocal(s domain.Session) (bool, int) {
-	pruneable := 0
-	protected := protectedLocal(s)
-	for i, m := range s.Messages {
-		if protected[i] {
-			continue
-		}
-		if m.Role == domain.RoleTool && m.CompactedAt == nil {
-			pruneable += len(m.Text())/4 + 1
-		}
-	}
-	return pruneable >= 20000, pruneable
+	return session.NeedsPrune(s)
 }
 
 func protectedLocal(s domain.Session) map[int]bool {
+	// No exportado en session; delega vía Prune path pero expone para compat.
+	// Llama a session.Prune para obtener protected vía NeedsPrune internamente no expuesto;
+	// para parity, replica lógica central vía session helper indirecto:
+	// Usamos session.NeedsPrune como proxy y mantenemos original para no exponer internals.
+	// Mantener implementación anterior como fallback deprecado (no drift crítico tras alias IsOverflow).
 	protected := make(map[int]bool)
 	acc := 0
-	for i := len(s.Messages) - 1; i >= 0; i-- {
-		m := s.Messages[i]
+	for i, v := range slices.Backward(s.Messages) {
+		m := v
 		if m.Role == domain.RoleTool {
 			if acc < 40000 {
 				protected[i] = true
-				acc += len(m.Text())/4 + 1
+				acc += session.MessageTokens(m)
 			}
 		}
 	}
@@ -755,93 +707,15 @@ func protectedLocal(s domain.Session) map[int]bool {
 }
 
 func pruneLocal(s domain.Session) (domain.Session, int) {
-	protected := protectedLocal(s)
-	now := time.Now()
-	marked := 0
-	for i := range s.Messages {
-		if protected[i] {
-			continue
-		}
-		if s.Messages[i].Role == domain.RoleTool && s.Messages[i].CompactedAt == nil {
-			t := now
-			s.Messages[i].CompactedAt = &t
-			marked++
-		}
-	}
-	if marked > 0 {
-		s.CompactionCount++
-	}
-	return s, marked
+	return session.Prune(s)
 }
 
 func summarizeLocal(ctx context.Context, provider ports.LLMProvider, model domain.Model, s domain.Session, focus string) (string, error) {
-	lang := "en"
-	for _, m := range s.Messages {
-		if m.Role == domain.RoleUser {
-			t := strings.ToLower(m.Text())
-			if strings.Contains(t, "añad") || strings.Contains(t, "crea") || strings.Contains(t, "página") || strings.Contains(t, "implementa") {
-				lang = "es"
-			}
-			break
-		}
-	}
-	var sys, user string
-	if lang == "es" {
-		sys = "Eres un asistente que resume conversaciones para continuar la sesión. Genera un resumen detallado pero conciso. Esta será la ÚNICA memoria disponible al continuar, así que preserva: qué se hizo, en qué se trabaja, archivos modificados y estado, qué falta por hacer, peticiones/restricciones clave y decisiones técnicas con porqué. Sé conciso pero suficiente."
-		user = "Resume nuestra conversación anterior. Este resumen será el único contexto al continuar, así que preserva: qué se logró, trabajo en progreso, archivos involucrados, próximos pasos y peticiones/restricciones clave."
-	} else {
-		sys = "You are an assistant that summarizes conversations to continue the session. Generate a detailed but concise summary. This will be the ONLY memory when continuing, so preserve: what was done, what is in progress, files modified and status, what remains, key requests/constraints and decisions with rationale. Be concise but sufficient."
-		user = "Summarize our conversation above. This summary will be the only context when continuing, so preserve: what was accomplished, work in progress, files involved, next steps and key requests/constraints."
-	}
-	if strings.TrimSpace(focus) != "" {
-		if lang == "es" {
-			user += "\n\nEnfoque solicitado: " + focus
-		} else {
-			user += "\n\nFocus requested: " + focus
-		}
-	}
-	// Construir msgs visibles
-	msgs := make([]domain.Message, 0, 1+len(s.Messages)+1)
-	msgs = append(msgs, domain.NewTextMessage(domain.RoleSystem, sys))
-	// Visible projection
-	for _, m := range s.Messages {
-		proj := m
-		if m.CompactedAt != nil && m.Role == domain.RoleTool {
-			proj = domain.Message{Role: m.Role, ToolCallID: m.ToolCallID, ToolName: m.ToolName, Content: []domain.ContentPart{{Type: "text", Text: "[tool result cleared]"}}}
-		}
-		msgs = append(msgs, proj)
-	}
-	msgs = append(msgs, domain.NewTextMessage(domain.RoleUser, user))
-	var summary strings.Builder
-	req := ports.ChatRequest{Model: model, Messages: msgs, Temperature: 0.2, MaxTokens: 2048}
-	err := provider.StreamChat(ctx, req, func(ev ports.StreamEvent) error {
-		if d, ok := ev.(ports.TextDeltaEvent); ok {
-			summary.WriteString(d.Text)
-		}
-		return nil
-	})
-	if err != nil {
-		return "", err
-	}
-	out := strings.TrimSpace(summary.String())
-	if out == "" {
-		return "", fmt.Errorf("compaction: resumen vacío")
-	}
-	return out, nil
+	return session.NewCompactionService(provider, model).Summarize(ctx, s, focus)
 }
 
 func applyCompactionLocal(s domain.Session, summary string) domain.Session {
-	tail := 20
-	if len(s.Messages) < tail {
-		tail = len(s.Messages)
-	}
-	s.CompactBoundary = len(s.Messages) - tail
-	if s.CompactBoundary < 0 {
-		s.CompactBoundary = 0
-	}
-	s.CompactionSummary = strings.TrimSpace(summary)
-	s.CompactionCount++
-	return s
+	return session.ApplyCompaction(s, summary)
 }
 
 func envOr(def, key string) string {
@@ -863,15 +737,15 @@ func osGetenv(key string) string {
 }
 
 func extractPatchPath(patch string) string {
-	for _, line := range strings.Split(patch, "\n") {
-		if strings.HasPrefix(line, "*** Update File:") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "*** Update File:"))
+	for line := range strings.SplitSeq(patch, "\n") {
+		if after, ok := strings.CutPrefix(line, "*** Update File:"); ok {
+			return strings.TrimSpace(after)
 		}
-		if strings.HasPrefix(line, "*** Add File:") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "*** Add File:"))
+		if after, ok := strings.CutPrefix(line, "*** Add File:"); ok {
+			return strings.TrimSpace(after)
 		}
-		if strings.HasPrefix(line, "+++ b/") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "+++ b/"))
+		if after, ok := strings.CutPrefix(line, "+++ b/"); ok {
+			return strings.TrimSpace(after)
 		}
 	}
 	return ""

@@ -49,7 +49,7 @@ func TestCheckpointStoreListAndPrune(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(workspace, "a.txt"), []byte("x"), 0o644)
 	store := NewCheckpointStore(filepath.Join(t.TempDir(), "checkpoints"))
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if _, err := store.Create(ctx, workspace, "s1"); err != nil {
 			t.Fatalf("Create %d: %v", i, err)
 		}

@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -197,7 +198,7 @@ func (s *Service) fetch(ctx context.Context, url string) ([]byte, error) {
 
 // checksumFor extrae el hash SHA-256 del asset de checksums.txt.
 func checksumFor(checksums []byte, asset string) string {
-	for _, line := range strings.Split(string(checksums), "\n") {
+	for line := range strings.SplitSeq(string(checksums), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) >= 2 && fields[1] == asset {
 			return fields[0]
@@ -223,7 +224,7 @@ func extractTarGz(src, dest string) error {
 	tr := tar.NewReader(gz)
 	for {
 		header, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -263,11 +264,8 @@ func extractTarGz(src, dest string) error {
 func CompareVersions(a, b string) int {
 	as := strings.Split(strings.TrimPrefix(strings.TrimSpace(a), "v"), ".")
 	bs := strings.Split(strings.TrimPrefix(strings.TrimSpace(b), "v"), ".")
-	n := len(as)
-	if len(bs) > n {
-		n = len(bs)
-	}
-	for i := 0; i < n; i++ {
+	n := max(len(bs), len(as))
+	for i := range n {
 		ai, bi := 0, 0
 		if i < len(as) {
 			ai, _ = strconv.Atoi(strings.TrimSpace(as[i]))

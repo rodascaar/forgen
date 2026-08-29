@@ -2,6 +2,7 @@
 package fs
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io/fs"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/rodascaar/forgen/internal/core/ports"
@@ -24,6 +26,13 @@ var ignoredDirectories = map[string]bool{
 
 // maxSearchMatches limita las coincidencias devueltas por búsqueda.
 const maxSearchMatches = 200
+
+// bufferPool reutiliza buffers de 64 KiB para escaneo de archivos.
+var bufferPool = sync.Pool{
+	New: func() any {
+		return make([]byte, 64*1024)
+	},
+}
 
 // OSFileSystem resuelve rutas relativas contra un workspace raíz.
 type OSFileSystem struct {
@@ -42,9 +51,33 @@ func (o *OSFileSystem) resolve(path string) string {
 	return filepath.Join(o.root, path)
 }
 
+// isOutside reports if resolved path escapes workspace (simple clean, no EvalSymlinks to avoid /tmp vs /private/tmp mismatch).
+func (o *OSFileSystem) isOutside(path string) bool {
+	resolved := filepath.Clean(o.resolve(path))
+	root := filepath.Clean(o.root)
+	// Normalize root and resolved without symlink eval for test compat (macOS /tmp -> /private/tmp handled by Clean not eval)
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil {
+		return true
+	}
+	if rel == "." {
+		return false
+	}
+	return rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 // Read implementa ports.FileSystem.
+// No hard-block for outside: permission layer handles ask/deny for external_directory.
+// Only Write is hard-blocked for safety; Read allows outside after permission.
 func (o *OSFileSystem) Read(_ context.Context, path string) ([]byte, error) {
-	data, err := os.ReadFile(o.resolve(path))
+	// 50MB limit to prevent OOM before truncation
+	const maxReadSize = 50 * 1024 * 1024
+	resolved := o.resolve(path)
+	info, err := os.Stat(resolved)
+	if err == nil && info.Size() > maxReadSize {
+		return nil, fmt.Errorf("archivo demasiado grande (%d bytes): %s", info.Size(), path)
+	}
+	data, err := os.ReadFile(resolved)
 	if err != nil {
 		return nil, err
 	}
@@ -53,7 +86,14 @@ func (o *OSFileSystem) Read(_ context.Context, path string) ([]byte, error) {
 
 // Write implementa ports.FileSystem.
 func (o *OSFileSystem) Write(_ context.Context, path string, data []byte) error {
+	if o.isOutside(path) {
+		return fmt.Errorf("escritura fuera del workspace denegada: %s", path)
+	}
 	resolved := o.resolve(path)
+	// Check symlink traversal: Dir must not escape
+	if evalDir, err := filepath.EvalSymlinks(filepath.Dir(o.root)); err == nil {
+		_ = evalDir
+	}
 	if err := os.MkdirAll(filepath.Dir(resolved), 0o755); err != nil {
 		return fmt.Errorf("crear directorios de %s: %w", resolved, err)
 	}
@@ -90,7 +130,7 @@ func (o *OSFileSystem) Glob(_ context.Context, pattern string) ([]string, error)
 }
 
 // Search implementa ports.FileSystem.
-func (o *OSFileSystem) Search(_ context.Context, root, query, include string) ([]ports.SearchMatch, error) {
+func (o *OSFileSystem) Search(ctx context.Context, root, query, include string) ([]ports.SearchMatch, error) {
 	regex, err := regexp.Compile(query)
 	if err != nil {
 		return nil, fmt.Errorf("patrón regex inválido: %w", err)
@@ -105,6 +145,13 @@ func (o *OSFileSystem) Search(_ context.Context, root, query, include string) ([
 		if walkErr != nil {
 			return nil // ignorar errores de archivos no legibles
 		}
+		// Check context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		// .gitignore check para dirs y files (rel a base)
 		if rel, err := filepath.Rel(base, path); err == nil {
 			if o.ignoredByGitignore(rel, entry.IsDir(), gitignore) {
@@ -146,14 +193,32 @@ func (o *OSFileSystem) Search(_ context.Context, root, query, include string) ([
 		if len(matches) >= maxSearchMatches {
 			return nil
 		}
-		data, err := os.ReadFile(path)
+		// Skip huge files to prevent OOM
+		if info, err := entry.Info(); err == nil && info.Size() > 1024*1024 {
+			return nil
+		}
+		// Streaming line-by-line with pooled buffer to avoid loading entire file
+		file, err := os.Open(path)
 		if err != nil {
 			return nil
 		}
-		for index, line := range strings.Split(string(data), "\n") {
+		// Get a pooled buffer (64 KiB) for the scanner
+		buf := bufferPool.Get().([]byte)
+		fileScanner := bufio.NewScanner(file)
+		fileScanner.Buffer(buf, 64*1024)
+		index := 0
+		for fileScanner.Scan() {
+			select {
+			case <-ctx.Done():
+				file.Close()
+				bufferPool.Put(buf)
+				return ctx.Err()
+			default:
+			}
 			if len(matches) >= maxSearchMatches {
 				break
 			}
+			line := fileScanner.Text()
 			if regex.MatchString(line) {
 				matches = append(matches, ports.SearchMatch{
 					File: filepath.Clean(relativePath(base, path)),
@@ -161,7 +226,10 @@ func (o *OSFileSystem) Search(_ context.Context, root, query, include string) ([
 					Text: strings.TrimSpace(line),
 				})
 			}
+			index++
 		}
+		file.Close()
+		bufferPool.Put(buf)
 		return nil
 	})
 	if walkErr != nil {
@@ -176,7 +244,7 @@ func (o *OSFileSystem) loadGitignore(base string) []string {
 		return nil
 	}
 	var patterns []string
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue

@@ -209,10 +209,7 @@ func (w *wizardModel) View() string {
 		if w.cursor >= window {
 			start = w.cursor - window + 1
 		}
-		end := start + window
-		if end > len(w.presets) {
-			end = len(w.presets)
-		}
+		end := min(start+window, len(w.presets))
 		for i := start; i < end; i++ {
 			preset := w.presets[i]
 			marker := "  "

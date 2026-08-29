@@ -2,7 +2,7 @@
 
 > Agente de código en tu terminal. Escribe en lenguaje natural, forgen lee, edita y ejecuta — con el LLM y el lenguaje que ya usas.
 
-[![Go Version](https://img.shields.io/badge/go-1.22+-00ADD8?style=flat&logo=go)](go.mod)
+[![Go Version](https://img.shields.io/badge/go-1.22%20toolchain%201.23-00ADD8?style=flat&logo=go)](go.mod)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat)](LICENSE)
 [![Build](https://img.shields.io/badge/build-passing-brightgreen?style=flat)](#tests)
 
@@ -88,6 +88,7 @@ Escribir es siempre seguro: **ninguna letra sola abre menús**. Todo es `/comand
 | Comando | Acción |
 |---------|--------|
 | `/init` | Configura proveedor y API key |
+| `/search` | Brave search API key |
 | `/provider` | Cambia proveedor por defecto |
 | `/model` | Cambia modelo (listado en vivo) |
 | `/sessions` | Retoma sesión guardada |
@@ -96,8 +97,17 @@ Escribir es siempre seguro: **ninguna letra sola abre menús**. Todo es `/comand
 | `/todo` `/plan` | Ver lista de tareas |
 | `/task` | Ver sub-agentes |
 | `/mcp` | Ver servidores MCP |
+| `/orchestration` `/orch` | Routing multi-modelo |
 | `/diff` `/commit` | Ver cambios git |
 | `/review` `/test` `/lint` `/fix` | Delegar a sub-agente |
+| `/pr` | Crear PR (gh) |
+| `/compact` | Compactar contexto |
+| `/context` | Estado de tokens |
+| `/trace` | Diagnóstico modelo/context |
+| `/undo` | Revertir última iteración |
+| `/retry` | Reintentar último prompt |
+| `/reasoning` `/reason` | Nivel reasoning |
+| `/copy` | Copiar al portapapeles |
 | `/help` `/?` | Ayuda |
 | `/quit` `/exit` | Salir |
 

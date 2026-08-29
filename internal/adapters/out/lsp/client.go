@@ -139,8 +139,8 @@ func (c *clientImpl) readContentLength() (int, error) {
 			}
 			return length, nil
 		}
-		if strings.HasPrefix(line, "Content-Length:") {
-			value := strings.TrimSpace(strings.TrimPrefix(line, "Content-Length:"))
+		if after, ok := strings.CutPrefix(line, "Content-Length:"); ok {
+			value := strings.TrimSpace(after)
 			parsed, err := strconv.Atoi(value)
 			if err != nil {
 				return 0, fmt.Errorf("lsp: Content-Length inválido %q", value)

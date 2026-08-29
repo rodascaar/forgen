@@ -122,7 +122,7 @@ func slashCommandKind(cmd string) string {
 
 func manyLines(n int) []transcriptLine {
 	lines := make([]transcriptLine, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		lines = append(lines, transcriptLine{kind: "user", text: fmt.Sprintf("línea %d", i)})
 	}
 	return lines

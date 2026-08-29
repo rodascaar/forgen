@@ -196,11 +196,11 @@ func buildAnthropicTools(tools []domain.Tool) []anthropicTool {
 // buildAnthropicMessages extrae el system prompt y sanea los mensajes
 // para cumplir las reglas de alternancia de Anthropic.
 func buildAnthropicMessages(messages []domain.Message) (string, []anthropicMessage) {
-	system := ""
+	var system strings.Builder
 	filtered := make([]domain.Message, 0, len(messages))
 	for _, message := range messages {
 		if message.Role == domain.RoleSystem {
-			system += message.Text() + "\n"
+			system.WriteString(message.Text() + "\n")
 			continue
 		}
 		filtered = append(filtered, message)
@@ -265,16 +265,17 @@ func buildAnthropicMessages(messages []domain.Message) (string, []anthropicMessa
 			Content: []anthropicContentBlock{{Type: "text", Text: "."}},
 		}}, result...)
 	}
-	return strings.TrimSpace(system), result
+	return strings.TrimSpace(system.String()), result
 }
 
 // anthropicAccumulator ensambla texto y tool_use desde los eventos SSE.
 type anthropicAccumulator struct {
-	handler  ports.StreamHandler
-	pending  map[int]*pendingCall
-	order    []int
-	stopSeen bool
-	logger   *slog.Logger
+	handler      ports.StreamHandler
+	pending      map[int]*pendingCall
+	order        []int
+	stopSeen     bool
+	outputTokens int
+	logger       *slog.Logger
 }
 
 func newAnthropicAccumulator(handler ports.StreamHandler, logger *slog.Logger) *anthropicAccumulator {
@@ -313,6 +314,9 @@ func (a *anthropicAccumulator) process(event anthropicSSEEvent) error {
 		if event.Delta != nil && event.Delta.StopReason != "" {
 			a.stopSeen = event.Delta.StopReason == "max_tokens"
 		}
+		if event.Usage != nil {
+			a.outputTokens = event.Usage.OutputTokens
+		}
 	case "message_start":
 		if event.Usage != nil {
 			if err := a.handler(ports.UsageEvent{Usage: domain.Usage{InputTokens: event.Usage.InputTokens}}); err != nil {
@@ -340,6 +344,9 @@ func (a *anthropicAccumulator) finish() error {
 	reason := domain.FinishReasonStop
 	if a.stopSeen {
 		reason = domain.FinishReasonMaxTokens
+	}
+	if a.outputTokens > 0 {
+		_ = a.handler(ports.UsageEvent{Usage: domain.Usage{OutputTokens: a.outputTokens}})
 	}
 	return a.handler(ports.DoneEvent{Reason: reason})
 }

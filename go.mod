@@ -1,6 +1,6 @@
 module github.com/rodascaar/forgen
 
-go 1.26.6
+go 1.25.0
 
 require (
 	github.com/atotto/clipboard v0.1.4

@@ -5,6 +5,7 @@ package skills
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -103,7 +104,7 @@ func ParseSkill(content, path string) Skill {
 }
 
 func firstParagraph(body string) string {
-	for _, line := range strings.Split(body, "\n") {
+	for line := range strings.SplitSeq(body, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
 			if len(trimmed) > 120 {
@@ -127,8 +128,8 @@ func CatalogWithBudget(skills []Skill, totalBudget, perSkillBudget int) string {
 	builder.WriteString("Habilidades disponibles (usa la herramienta read_skill para ver el detalle):\n")
 	used := 0
 	// LIFO: últimas (más específicas) primero, pero catalog ordenado alfabético — usar reverso LIFO
-	for i := len(skills) - 1; i >= 0; i-- {
-		s := skills[i]
+	for _, s := range slices.Backward(skills) {
+
 		line := fmt.Sprintf("- %s: %s\n", s.Name, s.Description)
 		if used+len(line) > totalBudget {
 			break

@@ -39,7 +39,14 @@ var dangerousPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\b(rm|rmdir|unlink|del|erase)\s+(\.\.?/|~/?|/)`),
 	regexp.MustCompile(`(?i)\b(dd|mkfs\.\w+|fdisk|shutdown|reboot|kill\s+-9)\b`),
 	regexp.MustCompile(`(?i):\(\)\s*\{\s*:\|:&\s*\};:`),
-	regexp.MustCompile(`(?i)\bchmod\s+777\b`),
+	regexp.MustCompile(`(?i)\bchmod\s+0?777\b`),
+	regexp.MustCompile(`(?i)\bchmod\s+[a-z]*\+?[rwx]{2,}\b`),
+	// pipe to shell / curl exfil
+	regexp.MustCompile(`(?i)\b(curl|wget)\b.*\|\s*(sh|bash|zsh)\b`),
+	regexp.MustCompile(`(?i)\b(curl|wget)\b.*\b(exec|eval)\b`),
+	regexp.MustCompile(`(?i)\b(base64\s+-d|eval\s+\$\()`),
+	regexp.MustCompile(`(?i)\bpython\d*\s+-c\b`),
+	regexp.MustCompile(`(?i)\b(node|perl)\s+-e\b`),
 }
 
 // dangerousSQLPatterns detectan SQL destructivo sobre base de datos activa.
@@ -160,7 +167,19 @@ func (s *Service) matchRule(call domain.ToolCall) (domain.PermissionRule, bool) 
 }
 
 func argsEqual(a, b map[string]any) bool {
-	return fmt.Sprintf("%v", a) == fmt.Sprintf("%v", b)
+	if len(a) != len(b) {
+		return false
+	}
+	for k, va := range a {
+		vb, ok := b[k]
+		if !ok {
+			return false
+		}
+		if fmt.Sprintf("%v", va) != fmt.Sprintf("%v", vb) {
+			return false
+		}
+	}
+	return true
 }
 
 func argsSubset(rule, call map[string]any) bool {
@@ -223,7 +242,7 @@ func (s *Service) isDatabaseWrite(call domain.ToolCall) bool {
 // (equivalente opencode external_directory / codex writable_roots).
 func (s *Service) isOutsideWorkspace(call domain.ToolCall) bool {
 	switch call.Name {
-	case "read", "read_many_files", "glob", "grep", "write", "edit":
+	case "read", "read_many_files", "glob", "grep", "write", "edit", "apply_patch", "bash", "ls":
 	default:
 		return false
 	}
@@ -243,6 +262,16 @@ func (s *Service) isOutsideWorkspace(call domain.ToolCall) bool {
 	}
 	if r, ok := call.Arguments["root"].(string); ok {
 		targets = append(targets, r)
+	}
+	// bash workdir/command may contain paths
+	if cmd, ok := call.Arguments["command"].(string); ok && call.Name == "bash" {
+		targets = append(targets, cmd)
+	}
+	if wd, ok := call.Arguments["workdir"].(string); ok {
+		targets = append(targets, wd)
+	}
+	if patch, ok := call.Arguments["patch"].(string); ok {
+		targets = append(targets, patch)
 	}
 	if s.workspace == "" {
 		return false
@@ -370,8 +399,8 @@ func toolMatches(pattern, tool string) bool {
 	if pattern == tool {
 		return true
 	}
-	if strings.HasSuffix(pattern, "*") {
-		prefix := strings.TrimSuffix(pattern, "*")
+	if before, ok := strings.CutSuffix(pattern, "*"); ok {
+		prefix := before
 		return strings.HasPrefix(tool, prefix)
 	}
 	if pattern == "*" {

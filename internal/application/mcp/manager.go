@@ -4,6 +4,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -26,9 +27,9 @@ func NewManager(registry *tools.Registry, logger *slog.Logger) *Manager {
 }
 
 // Start arranca los servidores configurados y registra sus herramientas.
-// Devuelve un slice con los errores de los servidores que no arrancaron
+// Devuelve un error combinado con los errores de los servidores que no arrancaron
 // (no fatal: un servidor caído no rompe al agente).
-func (m *Manager) Start(ctx context.Context, servers map[string]domain.MCPServerConfig) []error {
+func (m *Manager) Start(ctx context.Context, servers map[string]domain.MCPServerConfig) error {
 	var failures []error
 	for name, config := range servers {
 		if err := m.startServer(ctx, name, config); err != nil {
@@ -36,7 +37,7 @@ func (m *Manager) Start(ctx context.Context, servers map[string]domain.MCPServer
 			failures = append(failures, fmt.Errorf("mcp %s: %w", name, err))
 		}
 	}
-	return failures
+	return errors.Join(failures...)
 }
 
 func (m *Manager) startServer(ctx context.Context, name string, config domain.MCPServerConfig) error {

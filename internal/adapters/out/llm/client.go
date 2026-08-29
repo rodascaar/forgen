@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -21,10 +22,16 @@ const maxRetries = 4
 // baseBackoff es la espera inicial entre reintentos.
 const baseBackoff = 500 * time.Millisecond
 
-// clientTimeout limita la duración total de cada intento HTTP. Un valor
-// acotado evita que una petición a un endpoint bloqueado cuelgue la UI
-// durante minutos; el streaming de respuestas largas suele completarse antes.
-const clientTimeout = 90 * time.Second
+// clientTimeout 0 = sin timeout global; cada request usa context.WithTimeout dinámico.
+// Evita cortar streaming de reasoning high (8192 tokens) a 90s.
+const clientTimeout = 0
+
+// sseBufferPool reutiliza buffers de 4 MiB para escaneo SSE.
+var sseBufferPool = sync.Pool{
+	New: func() any {
+		return make([]byte, 4*1024*1024)
+	},
+}
 
 // Client es un cliente HTTP compartido con retry exponencial y fail-fast.
 type Client struct {
@@ -53,7 +60,7 @@ func (c *Client) Do(ctx context.Context, method, path string, jsonBody func() ([
 	var lastErr error
 	delay := baseBackoff
 
-	for attempt := 0; attempt < maxRetries; attempt++ {
+	for attempt := range maxRetries {
 		if attempt > 0 {
 			if !waitForRetry(ctx, delay, lastErr) {
 				return nil, fmt.Errorf("cancelado durante retry: %w", ctx.Err())
@@ -114,7 +121,8 @@ func (c *Client) Do(ctx context.Context, method, path string, jsonBody func() ([
 func shouldRetry(statusCode int) bool {
 	switch statusCode {
 	case http.StatusTooManyRequests, http.StatusRequestTimeout,
-		http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout,
+		http.StatusInternalServerError:
 		return true
 	}
 	return false
@@ -146,8 +154,11 @@ func waitForRetry(ctx context.Context, delay time.Duration, lastErr error) bool 
 // StreamSSE lee un body SSE línea a línea y llama a onLine por cada data.
 // Devuelve [DONE] como error centinel para cortar limpiamente.
 func (c *Client) StreamSSE(body io.Reader, onData func(data string) error) error {
+	buf := sseBufferPool.Get().([]byte)
+	defer sseBufferPool.Put(buf)
+
 	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+	scanner.Buffer(buf, cap(buf))
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data:") {

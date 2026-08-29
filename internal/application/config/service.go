@@ -103,6 +103,18 @@ func (s *Service) mergeFile(base, file domain.AppConfig) domain.AppConfig {
 	if file.Execution != (domain.ExecutionConfig{}) {
 		base.Execution = file.Execution
 	}
+	if file.Language != "" {
+		base.Language = file.Language
+	}
+	if file.ReasoningEffort != "" {
+		base.ReasoningEffort = file.ReasoningEffort
+	}
+	if file.Orchestration.Auto || len(file.Orchestration.Pool) > 0 {
+		base.Orchestration = file.Orchestration
+	}
+	if file.Compaction.Threshold != 0 || file.Compaction.Disabled {
+		base.Compaction = file.Compaction
+	}
 	return base
 }
 

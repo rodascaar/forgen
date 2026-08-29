@@ -102,8 +102,8 @@ func (c *httpClient) readSSE(body io.Reader, expectedID int64) (json.RawMessage,
 			continue
 		}
 		payload := line
-		if strings.HasPrefix(line, "data:") {
-			payload = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if after, ok := strings.CutPrefix(line, "data:"); ok {
+			payload = strings.TrimSpace(after)
 		}
 		if payload == "" || payload == "[DONE]" {
 			continue

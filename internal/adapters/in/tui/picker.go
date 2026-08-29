@@ -134,10 +134,7 @@ func (p *pickerModel) View() string {
 	if p.cursor >= window {
 		start = p.cursor - window + 1
 	}
-	end := start + window
-	if end > len(p.items) {
-		end = len(p.items)
-	}
+	end := min(start+window, len(p.items))
 	for i := start; i < end; i++ {
 		item := p.items[i]
 		marker := "  "

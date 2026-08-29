@@ -2,6 +2,7 @@ package domain
 
 import (
 	"embed"
+	"slices"
 	"strings"
 	"time"
 )
@@ -49,20 +50,13 @@ type Agent struct {
 
 // CanUseTool decide si el agente tiene permitido usar una herramienta.
 func (a Agent) CanUseTool(toolName string) bool {
-	for _, denied := range a.DeniedTools {
-		if denied == toolName {
-			return false
-		}
+	if slices.Contains(a.DeniedTools, toolName) {
+		return false
 	}
 	if len(a.AllowedTools) == 0 {
 		return true
 	}
-	for _, allowed := range a.AllowedTools {
-		if allowed == toolName {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(a.AllowedTools, toolName)
 }
 
 // BuiltinAgents devuelve los agentes integrados (legacy prompts inline; prefer PromptFor with embedded files).

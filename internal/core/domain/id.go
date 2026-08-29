@@ -2,7 +2,10 @@ package domain
 
 import (
 	"errors"
+	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // ErrNotFound se devuelve cuando un recurso no se encuentra.
@@ -13,10 +16,16 @@ func generateID() string {
 }
 
 func randomString(n int) string {
-	const letters = "abcdefghijklmnopqrstuvwxyz0123456789"
-	b := make([]byte, n)
-	for i := range b {
-		b[i] = letters[time.Now().UnixNano()%int64(len(letters))]
+	// Usa uuid para entropía criptográfica; recorta a n caracteres hex sin guiones.
+	id := uuid.NewString()
+	var clean strings.Builder
+	for _, ch := range id {
+		if ch != '-' {
+			clean.WriteString(string(ch))
+		}
 	}
-	return string(b)
+	if len(clean.String()) >= n {
+		return clean.String()[:n]
+	}
+	return clean.String()
 }

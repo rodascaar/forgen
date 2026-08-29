@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/json"
+	"slices"
 	"time"
 )
 
@@ -100,21 +101,19 @@ func (l *TodoList) AddTodo(todo *Todo) {
 	l.UpdatedAt = time.Now()
 }
 func (l *TodoList) RemoveTodo(id string) bool {
-	for i, t := range l.Todos {
-		if t.ID == id {
-			l.Todos = append(l.Todos[:i], l.Todos[i+1:]...)
-			l.reorder()
-			l.UpdatedAt = time.Now()
-			return true
-		}
+	idx := slices.IndexFunc(l.Todos, func(t *Todo) bool { return t.ID == id })
+	if idx >= 0 {
+		l.Todos = slices.Delete(l.Todos, idx, idx+1)
+		l.reorder()
+		l.UpdatedAt = time.Now()
+		return true
 	}
 	return false
 }
 func (l *TodoList) GetTodo(id string) *Todo {
-	for _, t := range l.Todos {
-		if t.ID == id {
-			return t
-		}
+	idx := slices.IndexFunc(l.Todos, func(t *Todo) bool { return t.ID == id })
+	if idx >= 0 {
+		return l.Todos[idx]
 	}
 	return nil
 }
@@ -122,25 +121,16 @@ func (l *TodoList) MoveTodo(id string, newIndex int) bool {
 	if newIndex < 0 || newIndex >= len(l.Todos) {
 		return false
 	}
-	var todo *Todo
-	var old int
-	found := false
-	for i, t := range l.Todos {
-		if t.ID == id {
-			todo = t
-			old = i
-			found = true
-			break
-		}
-	}
-	if !found {
+	idx := slices.IndexFunc(l.Todos, func(t *Todo) bool { return t.ID == id })
+	if idx < 0 {
 		return false
 	}
-	l.Todos = append(l.Todos[:old], l.Todos[old+1:]...)
+	todo := l.Todos[idx]
+	l.Todos = slices.Delete(l.Todos, idx, idx+1)
 	if newIndex >= len(l.Todos) {
 		l.Todos = append(l.Todos, todo)
 	} else {
-		l.Todos = append(l.Todos[:newIndex], append([]*Todo{todo}, l.Todos[newIndex:]...)...)
+		l.Todos = slices.Insert(l.Todos, newIndex, todo)
 	}
 	l.reorder()
 	l.UpdatedAt = time.Now()
