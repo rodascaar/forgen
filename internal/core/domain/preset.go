@@ -49,6 +49,11 @@ func ProviderPresets() []ProviderPreset {
 
 		// Local
 		{Name: "ollama", Type: ProviderTypeOpenAICompatible, BaseURL: "http://localhost:11434/v1", APIKeyEnv: "", Models: []string{"llama3"}},
+		// Genérico OpenAI-compatible (llama.cpp, vLLM, LM Studio, etc.)
+		// BaseURL por defecto apunta a llama.cpp; el usuario lo sobrescribe con --base-url.
+		// APIKeyEnv vacío = sin auth (típico en local). Modelos se auto-detectan vía GET /v1/models.
+		{Name: "custom", Type: ProviderTypeOpenAICompatible, BaseURL: "http://localhost:8080/v1", APIKeyEnv: "", Models: []string{"default"}},
+		{Name: "local", Type: ProviderTypeOpenAICompatible, BaseURL: "http://localhost:8080/v1", APIKeyEnv: "", Models: []string{"default"}},
 	}
 }
 

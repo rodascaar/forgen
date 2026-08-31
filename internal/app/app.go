@@ -459,6 +459,8 @@ func reasoningEffortOr(override, config string) string {
 
 // ValidateProviderKey valida una API key contra el proveedor y devuelve los
 // modelos disponibles para la cuenta. Compartido por CLI (auth) y TUI (init).
+// Para endpoints locales (isLocalEndpoint) el error de red se trata como fallback
+// a config.Models o ["default"] para permitir `custom` sin server levantado.
 func (a *App) ValidateProviderKey(ctx context.Context, config domain.ProviderConfig, apiKey string) ([]string, error) {
 	provider, err := a.LLMFactory.CreateWithKeyResolver(config, func(domain.ProviderConfig) string {
 		return apiKey
@@ -468,9 +470,21 @@ func (a *App) ValidateProviderKey(ctx context.Context, config domain.ProviderCon
 	}
 	models, err := provider.ListModels(ctx)
 	if err != nil {
+		if isLocalEndpoint(config.BaseURL) {
+			if len(config.Models) > 0 {
+				return config.Models, nil
+			}
+			return []string{"default"}, nil
+		}
 		return nil, err
 	}
 	if len(models) == 0 {
+		if len(config.Models) > 0 {
+			return config.Models, nil
+		}
+		if isLocalEndpoint(config.BaseURL) {
+			return []string{"default"}, nil
+		}
 		return config.Models, nil
 	}
 	return models, nil

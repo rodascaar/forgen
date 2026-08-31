@@ -93,12 +93,17 @@ func promptProvider(reader *bufio.Reader, out io.Writer) (domain.ProviderConfig,
 	}
 
 	baseURL := ask(reader, out, "Base URL (ej: https://api.openai.com/v1): ")
-	apiKeyEnv := ask(reader, out, "Variable de entorno de la API key (ej: OPENAI_API_KEY): ")
-	modelsRaw := ask(reader, out, "Modelos separados por coma (ej: gpt-5, gpt-5-mini): ")
+	if baseURL == "" && (strings.Contains(strings.ToLower(name), "local") || strings.Contains(strings.ToLower(name), "custom") || strings.Contains(strings.ToLower(name), "llama")) {
+		baseURL = "http://localhost:8080/v1"
+		_, _ = fmt.Fprintf(out, "  → usando por defecto %s (llama.cpp)\n", baseURL)
+	}
+	apiKeyEnv := ask(reader, out, "Variable de entorno de la API key (vacío para local sin auth, ej: OPENAI_API_KEY): ")
+	modelsRaw := ask(reader, out, "Modelos separados por coma (vacío para auto-detectar vía GET /v1/models): ")
 
 	models := splitModels(modelsRaw)
 	if len(models) == 0 {
-		return domain.ProviderConfig{}, fmt.Errorf("debes indicar al menos un modelo")
+		_, _ = fmt.Fprintln(out, "  → sin modelos manuales: se auto-detectarán vía GET /v1/models al usar el proveedor (o usa 'default').")
+		models = []string{"default"}
 	}
 
 	return domain.ProviderConfig{

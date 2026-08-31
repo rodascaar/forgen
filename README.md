@@ -128,11 +128,16 @@ providers:
     base_url: https://api.openai.com/v1
     api_key_env: OPENAI_API_KEY
     models: [gpt-5, gpt-5-mini]
-  - name: local
+  - name: local          # Ollama
     type: openai_compatible
     base_url: http://localhost:11434/v1
     api_key_env: ""
     models: [llama3]
+  - name: custom         # llama.cpp / vLLM / LM Studio — genérico OpenAI-compatible
+    type: openai_compatible
+    base_url: http://localhost:8080/v1
+    api_key_env: ""      # sin auth para local; auto-detecta modelos vía GET /v1/models
+    models: [default]
 default:
   provider: openai
   model: gpt-5
@@ -143,7 +148,17 @@ theme:
   accent: "#7aa4ff"
 ```
 
-**Proveedores soportados:** cualquier API `OpenAI-compatible` (OpenAI, OpenRouter, Groq, Together, Mistral, Ollama local, etc.) y Anthropic nativo. `forgen provider list` muestra presets; `forgen auth` guarda tu key en el keychain ( `0600` fallback ) y auto-detecta modelos.
+Custom local (ej. llama.cpp):
+```bash
+forgen provider add custom --base-url http://localhost:8080/v1 --no-auth
+# auto-detecta modelos desde GET /v1/models y los guarda; luego:
+forgen config set provider custom
+forgen config set model default
+# o con modelo explícito:
+forgen provider add custom --base-url http://localhost:8080/v1 --models my-model --no-auth
+```
+
+**Proveedores soportados:** cualquier API `OpenAI-compatible` (OpenAI, OpenRouter, Groq, Together, Mistral, Ollama local, llama.cpp/vLLM/LM Studio vía `custom`, etc.) y Anthropic nativo. `forgen provider list` muestra presets; `forgen auth` guarda tu key en el keychain ( `0600` fallback ) y auto-detecta modelos vía `GET /v1/models` (si es `custom`/`local` sin modelo, lo detecta al añadir).
 
 Variables útiles: `FORGEN_CONFIG_DIR`, `FORGEN_DATA_DIR`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `BRAVE_API_KEY` (búsqueda).
 

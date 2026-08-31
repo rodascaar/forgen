@@ -18,6 +18,12 @@ providers:
     base_url: http://localhost:11434/v1
     api_key_env: ""
     models: [llama3]
+  # Custom OpenAI-compatible (llama.cpp, vLLM, LM Studio) — auto-detecta modelos vía GET /v1/models
+  - name: custom
+    type: openai_compatible
+    base_url: http://localhost:8080/v1
+    api_key_env: ""
+    models: [default]
 
 # Proveedor y modelo por defecto.
 default:

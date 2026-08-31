@@ -4,6 +4,14 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-1.1.0/) y
 el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 
+## [0.1.24] - 2026-08-31
+
+### Añadido
+
+- **Proveedor `custom`/`local` OpenAI-compatible (llama.cpp, vLLM, LM Studio)**: `forgen provider add custom --base-url http://localhost:8080/v1 --no-auth` auto-detecta modelos vía `GET /v1/models` (paridad con Opencode `GET /v1/models` auto-discovery). Flags `--base-url`, `--models`, `--api-key-env`, `--no-auth`, `--name` en `forgen provider add`; `forgen provider add --base-url ... --name mi-local` crea proveedor genérico sin editar YAML. `forgen auth` ahora permite key vacía para locales (`Enter para sin auth`), `ValidateProviderKey` hace fallback a `["default"]` si el endpoint local no responde. Presets `custom`/`local` (`http://localhost:8080/v1`) en `internal/core/domain/preset.go` (`internal/adapters/in/cli/provider.go`, `internal/app/app.go`, `internal/adapters/in/cli/init.go`).
+- **Wizard `forgen init` relajado**: `Base URL` por defecto `http://localhost:8080/v1` para nombres `local/custom/llama`, `api_key_env` opcional y `modelos` vacío → `["default"]` con auto-detección posterior.
+- **Docs**: bloque `custom` en `configs/forgen.yaml.example` y `README.md` con ejemplos `forgen provider add custom ...` y `forgen config set`.
+
 ## [0.1.22] - 2026-08-25
 
 ### Añadido
