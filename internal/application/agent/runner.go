@@ -27,6 +27,89 @@ const (
 	deniedResultMessage = "PERMISO DENEGADO"
 )
 
+// fewShotForSmallModels son ejemplos de tool calling para modelos pequeños
+// que tienden a "hablar" en lugar de ejecutar herramientas.
+var fewShotForSmallModels = []domain.Message{
+	domain.NewTextMessage(domain.RoleUser, "¿Cuántos archivos .go hay en src/?"),
+	domain.NewTextMessage(domain.RoleAssistant, "Para contar archivos .go necesito buscarlos. Usaré la herramienta glob con patrón src/**/*.go."),
+	domain.NewTextMessage(domain.RoleTool, "Hay 12 archivos .go en src/: file1.go, file2.go..."),
+	domain.NewTextMessage(domain.RoleAssistant, "Hay 12 archivos .go en src/."),
+	domain.NewTextMessage(domain.RoleUser, "Muestra el contenido de config.yaml"),
+	domain.NewTextMessage(domain.RoleAssistant, "Para mostrar el contenido necesito leer el archivo. Usaré read con path config.yaml."),
+	domain.NewTextMessage(domain.RoleTool, "Contenido: ..."),
+	domain.NewTextMessage(domain.RoleAssistant, "El contenido de config.yaml es: ..."),
+}
+
+// samplingForTier devuelve temperatura, top_p y top_k según el tier del modelo.
+// small/light (≤9b): temp 0.0, top_p 0.95, top_k 40 — determinista para tool-calling fiable.
+// standard: temp 0.2, top_p 0.95 — balanceado.
+// heavy: temp 0.2, top_p 0.95 — creatividad para tareas complejas.
+func samplingForTier(tier domain.Tier) (temp float64, topP *float64, topK *int) {
+	switch tier {
+	case domain.TierLight:
+		t := 0.0
+		p := 0.95
+		k := 40 // top_k 40-50 recomendado para 7-9B en tool calling
+		return t, &p, &k
+	case domain.TierHeavy:
+		t := 0.2
+		p := 0.95
+		return t, &p, nil
+	default: // TierStandard
+		t := 0.2
+		p := 0.95
+		return t, &p, nil
+	}
+}
+
+// maxTokensForTier devuelve el máximo de tokens según tier y metadata del modelo.
+// Light: 512 tokens (suficiente para tool calls simples)
+// Standard: 1024 tokens
+// Heavy: 4096 tokens (defaultMaxTokens)
+// Si ModelMetadata.MaxOutput está definido y es > 0, se usa ese valor.
+func maxTokensForTier(tier domain.Tier, meta domain.ModelMetadata) int {
+	if meta.MaxOutput > 0 {
+		return meta.MaxOutput
+	}
+	switch tier {
+	case domain.TierLight:
+		return 512
+	case domain.TierHeavy:
+		return defaultMaxTokens
+	default: // TierStandard
+		return 1024
+	}
+}
+
+// inferTierFromID deduce el tier del modelo por su ID usando la heurística centralizada.
+func inferTierFromID(id string) domain.Tier {
+	return domain.InferTierFromID(id)
+}
+
+// shouldRetrySmallModel detecta respuestas evasivas de modelos pequeños.
+func shouldRetrySmallModel(text string) bool {
+	text = strings.ToLower(strings.TrimSpace(text))
+	if text == "" {
+		return true
+	}
+	// Patrones de evasión comunes en modelos pequeños
+	evasivePatterns := []string{
+		"no puedo", "no tengo acceso", "no estoy seguro", "no sé",
+		"como modelo de lenguaje", "como ia", "limitar mi capacidad",
+		"no dispongo de", "no tengo información",
+	}
+	for _, pat := range evasivePatterns {
+		if strings.Contains(text, pat) {
+			return true
+		}
+	}
+	// Si la respuesta es muy corta y no contiene tool calls, probar de nuevo
+	if len(text) < 50 {
+		return true
+	}
+	return false
+}
+
 // Runner ejecuta un turno completo del agente: prompt → LLM → tools → observación.
 type Runner struct {
 	provider        ports.LLMProvider
@@ -164,7 +247,7 @@ func (r *Runner) Run(ctx context.Context, input RunInput) (RunResult, error) {
 		r.logger.Info("llm.request", "session", input.Session.ID, "iteration", iteration,
 			"model", input.Session.Model.Key(), "messages", len(messages), "tools", len(tools))
 
-		response, err := r.callLLM(ctx, input.Session.ID, input.Session.Model, messages, tools, input.Phase)
+		response, err := r.callLLM(ctx, input.Session.ID, input.Session.Model, messages, tools, input.Phase, iteration)
 		if err != nil {
 			return RunResult{}, err
 		}
@@ -230,7 +313,7 @@ type llmResponse struct {
 const llmTimeout = 150 * time.Second
 
 func (r *Runner) callLLM(ctx context.Context, sessionID string, model domain.Model,
-	messages []domain.Message, tools []domain.Tool, phase domain.AgentPhase) (llmResponse, error) {
+	messages []domain.Message, tools []domain.Tool, phase domain.AgentPhase, iteration int) (llmResponse, error) {
 	var response llmResponse
 	var mutex sync.Mutex
 	var builder strings.Builder
@@ -245,12 +328,44 @@ func (r *Runner) callLLM(ctx context.Context, sessionID string, model domain.Mod
 	ctx, cancel := context.WithTimeout(ctx, llmTimeout)
 	defer cancel()
 
+	// Inferir tier del modelo para sampling adaptativo.
+	// Si model.Tier está vacío, usar inferencia por nombre (misma lógica que orchestrator).
+	modelTier := domain.Tier(model.Tier)
+	if modelTier == "" {
+		modelTier = inferTierFromID(model.ID)
+	}
+
+	// Log tiered para debugging
+	r.logger.Info("llm.call", "session", sessionID, "model", model.ID, "provider", model.Provider, "tier", string(modelTier), "phase", string(phase), "tools", len(tools), "messages", len(messages))
+
+	// Log extra para modelos pequeños
+	if modelTier == domain.TierLight {
+		r.logger.Debug("llm.small_model_optimizations", "session", sessionID, "model", model.ID, "sampling", "temp=0.0 top_p=0.95 top_k=40", "few_shot", phase == domain.PhasePlan)
+	}
+
+	temp, topP, topK := samplingForTier(modelTier)
+
+	// Filtrar TopK solo para proveedores que lo soportan (OpenAI-compatible locales)
+	// OpenAI y Anthropic oficiales no aceptan top_k
+	if model.Provider == "openai" || model.Provider == "anthropic" {
+		topK = nil
+	}
+
+	// Para modelos pequeños, inyectar few-shot examples de tool calling
+	// para mejorar la tasa de aciertos. Solo en iteración 0 para limitar tokens.
+	messagesWithExamples := messages
+	if modelTier == domain.TierLight && len(tools) > 0 && iteration == 0 {
+		messagesWithExamples = append(fewShotForSmallModels, messages...)
+	}
+
 	request := ports.ChatRequest{
 		Model:           model,
-		Messages:        messages,
+		Messages:        messagesWithExamples,
 		Tools:           tools,
-		Temperature:     defaultTemperature,
-		MaxTokens:       defaultMaxTokens,
+		Temperature:     temp,
+		TopP:            topP,
+		TopK:            topK,
+		MaxTokens:       maxTokensForTier(modelTier, r.compaction.ModelMetadata[model.ID]),
 		ReasoningEffort: r.reasoningEffort,
 	}
 
@@ -284,6 +399,69 @@ func (r *Runner) callLLM(ctx context.Context, sessionID string, model domain.Mod
 	mutex.Lock()
 	response.text = builder.String()
 	mutex.Unlock()
+
+	// Retry imperceptible para modelos pequeños: solo para providers locales (llama.cpp, ollama, etc.).
+	// OpenAI/Anthropic oficiales tienen rate limits y coste; retry duplicaría coste y latencia.
+	isLocalProvider := model.Provider != "openai" && model.Provider != "anthropic"
+	if modelTier == domain.TierLight && !response.hasToolCalls && len(tools) > 0 && isLocalProvider {
+		if shouldRetrySmallModel(response.text) {
+			r.logger.Info("llm.retry_small_model", "session", sessionID, "model", model.ID, "reason", "no_tool_calls_or_evasive")
+			// Segundo intento con temp=0 determinista y prompt más explícito con feedback
+			retrySystem := "IMPORTANTE: Tu respuesta anterior no usó herramientas o fue evasiva. Debes usar herramientas cuando el usuario pida información sobre archivos, código o estado del proyecto. NO inventes respuestas. Output SOLO JSON válido para tool calls, sin texto adicional. Si no puedes responder, ejecuta la herramienta adecuada."
+			messagesWithRetry := append([]domain.Message{
+				domain.NewTextMessage(domain.RoleSystem, retrySystem),
+			}, messagesWithExamples...)
+			
+			// Limpiar respuesta previa para re-stream
+			builder.Reset()
+			response = llmResponse{}
+			
+			topP := 0.95
+			topK := 40
+			// Filtrar TopK solo para proveedores que lo soportan
+			var retryTopK *int = &topK
+			if model.Provider == "openai" || model.Provider == "anthropic" {
+				retryTopK = nil
+			}
+requestRetry := ports.ChatRequest{
+			Model:           model,
+			Messages:        messagesWithRetry,
+			Tools:           tools,
+			Temperature:     0.0,
+			TopP:            &topP,
+			TopK:            retryTopK,
+			MaxTokens:       maxTokensForTier(modelTier, r.compaction.ModelMetadata[model.ID]),
+			ReasoningEffort: r.reasoningEffort,
+		}
+			
+			err = r.provider.StreamChat(ctx, requestRetry, func(event ports.StreamEvent) error {
+				switch typedEvent := event.(type) {
+				case ports.TextDeltaEvent:
+					mutex.Lock()
+					builder.WriteString(typedEvent.Text)
+					mutex.Unlock()
+					// No re-stream text para evitar duplicados; ya se mostró el primer intento
+				case ports.ToolCallEvent:
+					mutex.Lock()
+					response.toolCalls = append(response.toolCalls, typedEvent.Call)
+					response.toolCallCount++
+					response.hasToolCalls = true
+					mutex.Unlock()
+				case ports.UsageEvent:
+					mutex.Lock()
+					response.usage = typedEvent.Usage
+					mutex.Unlock()
+				}
+				return nil
+			})
+			if err == nil {
+				mutex.Lock()
+				response.text = builder.String()
+				mutex.Unlock()
+			}
+		}
+	}
+
 	if response.toolCallCount > 0 && len(response.toolCalls) != response.toolCallCount {
 		return llmResponse{}, errors.New("llm: llamadas a herramientas incompletas en el streaming")
 	}

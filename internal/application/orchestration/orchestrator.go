@@ -243,21 +243,11 @@ func (o *Orchestrator) tierOf(model domain.Model) domain.Tier {
 // fallback cuando no hay model_metadata explícita, para que el routing por
 // complejidad funcione sin configurar tiers a mano. Override-able con
 // model_metadata.
+// Heurística agnóstica: busca patrón de parámetros (Xb = billions) en el nombre.
+// Ejemplos: "7b" "3b" "70b" "8b" "12b" "1b" "0.5b" → tier según magnitud.
+// Si no hay patrón, usa keywords legacy como fallback.
 func inferTier(id string) domain.Tier {
-	id = strings.ToLower(id)
-	heavy := []string{"pro", "opus", "ultra", "max", "large", "405b", "253b", "120b", "70b", "qwen-max", "deepseek-r1", "nemotron-ultra", "gigant"}
-	for _, kw := range heavy {
-		if strings.Contains(id, kw) {
-			return domain.TierHeavy
-		}
-	}
-	light := []string{"mini", "nano", "flash", "haiku", "small", "lite", "light", "1b", "3b", "7b", "8b", "12b", "fast"}
-	for _, kw := range light {
-		if strings.Contains(id, kw) {
-			return domain.TierLight
-		}
-	}
-	return domain.TierStandard
+	return domain.InferTierFromID(id)
 }
 
 func tierWeight(tier domain.Tier) int {

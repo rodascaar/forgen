@@ -36,6 +36,8 @@ type openAIRequest struct {
 	Messages        []openAIMessage `json:"messages"`
 	Tools           []openAITool    `json:"tools,omitempty"`
 	Temperature     float64         `json:"temperature"`
+	TopP            *float64        `json:"top_p,omitempty"`
+	TopK            *int            `json:"top_k,omitempty"`
 	MaxTokens       int             `json:"max_tokens"`
 	ReasoningEffort string          `json:"reasoning_effort,omitempty"`
 	Stream          bool            `json:"stream"`
@@ -123,6 +125,8 @@ func (o *OpenAICompatible) StreamChat(ctx context.Context, request ports.ChatReq
 		Messages:        buildOpenAIMessages(request.Messages),
 		Tools:           buildOpenAITools(request.Tools),
 		Temperature:     request.Temperature,
+		TopP:            request.TopP,
+		TopK:            request.TopK,
 		MaxTokens:       request.MaxTokens,
 		ReasoningEffort: normalizeReasoningEffort(request.ReasoningEffort),
 		Stream:          true,

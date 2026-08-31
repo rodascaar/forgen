@@ -42,6 +42,8 @@ type ChatRequest struct {
 	Messages    []domain.Message
 	Tools       []domain.Tool
 	Temperature float64
+	TopP        *float64 // nil = default del proveedor; 0.0-1.0 para nucleus sampling
+	TopK        *int     // nil = default del proveedor; >0 para top-k sampling
 	MaxTokens   int
 	// ReasoningEffort controla el nivel de razonamiento del modelo: "off",
 	// "low", "medium" o "high". Vacío equivale a "off" (no enviar).
