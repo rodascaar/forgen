@@ -41,6 +41,10 @@ func (s *SyncingFileSystem) Exists(ctx context.Context, path string) (bool, erro
 	return s.inner.Exists(ctx, path)
 }
 
+func (s *SyncingFileSystem) IsDir(ctx context.Context, path string) (bool, error) {
+	return s.inner.IsDir(ctx, path)
+}
+
 func (s *SyncingFileSystem) Glob(ctx context.Context, pattern string) ([]string, error) {
 	return s.inner.Glob(ctx, pattern)
 }

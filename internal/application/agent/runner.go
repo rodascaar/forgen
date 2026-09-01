@@ -38,6 +38,11 @@ var fewShotForSmallModels = []domain.Message{
 	domain.NewTextMessage(domain.RoleAssistant, "Para mostrar el contenido necesito leer el archivo. Usaré read con path config.yaml."),
 	domain.NewTextMessage(domain.RoleTool, "Contenido: ..."),
 	domain.NewTextMessage(domain.RoleAssistant, "El contenido de config.yaml es: ..."),
+	// Ejemplo crítico para el bug de directorio vs archivo (Gemma-4B)
+	domain.NewTextMessage(domain.RoleUser, "Genera un html autocontenido en Test-local"),
+	domain.NewTextMessage(domain.RoleAssistant, "Voy a crear el archivo HTML. Usaré write con path Test-local/index.html (debe incluir nombre de archivo, no solo directorio)."),
+	domain.NewTextMessage(domain.RoleTool, "Archivo Test-local/index.html escrito (1024 bytes)"),
+	domain.NewTextMessage(domain.RoleAssistant, "Listo, creado Test-local/index.html."),
 }
 
 // samplingForTier devuelve temperatura, top_p y top_k según el tier del modelo.
@@ -63,7 +68,7 @@ func samplingForTier(tier domain.Tier) (temp float64, topP *float64, topK *int) 
 }
 
 // maxTokensForTier devuelve el máximo de tokens según tier y metadata del modelo.
-// Light: 512 tokens (suficiente para tool calls simples)
+// Light: 1024 tokens (subido de 512 para HTML/tool calls largos como el bug reportado)
 // Standard: 1024 tokens
 // Heavy: 4096 tokens (defaultMaxTokens)
 // Si ModelMetadata.MaxOutput está definido y es > 0, se usa ese valor.
@@ -73,7 +78,7 @@ func maxTokensForTier(tier domain.Tier, meta domain.ModelMetadata) int {
 	}
 	switch tier {
 	case domain.TierLight:
-		return 512
+		return 1024
 	case domain.TierHeavy:
 		return defaultMaxTokens
 	default: // TierStandard
@@ -97,6 +102,7 @@ func shouldRetrySmallModel(text string) bool {
 		"no puedo", "no tengo acceso", "no estoy seguro", "no sé",
 		"como modelo de lenguaje", "como ia", "limitar mi capacidad",
 		"no dispongo de", "no tengo información",
+		"dime la ruta exacta", "especifica el nombre del archivo",
 	}
 	for _, pat := range evasivePatterns {
 		if strings.Contains(text, pat) {
@@ -106,6 +112,20 @@ func shouldRetrySmallModel(text string) bool {
 	// Si la respuesta es muy corta y no contiene tool calls, probar de nuevo
 	if len(text) < 50 {
 		return true
+	}
+	return false
+}
+
+// shouldRetryToolError detecta tool results con errores típicos de SLM (is a directory, old_string no encontrado)
+func shouldRetryToolError(toolMessages []domain.Message) bool {
+	for _, m := range toolMessages {
+		if m.Role != domain.RoleTool {
+			continue
+		}
+		txt := strings.ToLower(m.Text())
+		if strings.Contains(txt, "is a directory") || strings.Contains(txt, "es un directorio") {
+			return true
+		}
 	}
 	return false
 }
@@ -504,16 +524,32 @@ func (r *Runner) executeTools(ctx context.Context, sessionID, workspace string, 
 	}
 	permResults := make([]permResult, len(calls))
 	for i, call := range calls {
-		// Check readOnly block primero (sync, sin I/O)
+		// Check readOnly block primero (sync, sin I/O) — con excepción para plan artifact
 		if agent.IsReadOnly && !readOnlyToolAllowlist[call.Name] {
-			denied := domain.ToolResult{
-				ToolCallID: call.ID,
-				OK:         false,
-				Output:     deniedResultMessage,
-				Error:      fmt.Errorf("%s: herramienta %q no permitida en modo plan", deniedResultMessage, call.Name),
+			// Permitir write solo a .forgen/plans/* en modo plan (claude-code strict)
+			if call.Name == "write" {
+				if p, ok := call.Arguments["path"].(string); ok && isPlanArtifactPath(p) {
+					// permitir, no denegar
+				} else {
+					denied := domain.ToolResult{
+						ToolCallID: call.ID,
+						OK:         false,
+						Output:     deniedResultMessage,
+						Error:      fmt.Errorf("%s: herramienta %q no permitida en modo plan (solo .forgen/plans/* permitido)", deniedResultMessage, call.Name),
+					}
+					permResults[i] = permResult{idx: i, call: call, result: &denied}
+					continue
+				}
+			} else {
+				denied := domain.ToolResult{
+					ToolCallID: call.ID,
+					OK:         false,
+					Output:     deniedResultMessage,
+					Error:      fmt.Errorf("%s: herramienta %q no permitida en modo plan", deniedResultMessage, call.Name),
+				}
+				permResults[i] = permResult{idx: i, call: call, result: &denied}
+				continue
 			}
-			permResults[i] = permResult{idx: i, call: call, result: &denied}
-			continue
 		}
 		decision, err := r.decider.Decide(ctx, sessionID, call)
 		if err != nil {
@@ -672,6 +708,7 @@ func (r *Runner) executeWithPermission(ctx context.Context, sessionID string, ag
 // (logs, búsqueda en la web, git status/diff y LSP de lectura). Cualquier
 // herramienta capaz de modificar archivos, estado o lanzar sub-agentes
 // (task, write, edit, bash, apply_patch, lsp_rename, todo, mcp_*) queda fuera.
+// Excepción: write solo a .forgen/plans/* se permite vía isPlanArtifactPath (claude-code strict).
 var readOnlyToolAllowlist = map[string]bool{
 	"read":                  true,
 	"read_many_files":       true,
@@ -685,6 +722,8 @@ var readOnlyToolAllowlist = map[string]bool{
 	"web_search":            true,
 	"todowrite":             true,
 	"update_plan":           true,
+	"ask_question":          true,
+	"exit_plan_mode":        true,
 	"lsp_diagnostics":       true,
 	"lsp_hover":             true,
 	"lsp_implementation":    true,
@@ -693,6 +732,12 @@ var readOnlyToolAllowlist = map[string]bool{
 	"lsp_workspace_symbols": true,
 	"lsp_code_action":       true,
 	"lsp_completion":        true,
+}
+
+// isPlanArtifactPath permite write en plan mode solo a artefactos de plan (claude-code strict).
+func isPlanArtifactPath(p string) bool {
+	clean := filepath.Clean(p)
+	return clean == ".forgen/plans/plan.md" || strings.HasPrefix(clean, ".forgen/plans/") || strings.HasPrefix(clean, ".forgen/plans\\")
 }
 
 // visibleTools filtra las herramientas según el agente.

@@ -204,15 +204,21 @@ type readArgs struct {
 }
 
 func (r *Registry) readTool() ToolDef {
-	return newGenericTool("read", "Lee un archivo (offset/limit para paginar). Para 2+ archivos usa read_many_files en una sola llamada.",
+	return newGenericTool("read", "Lee un archivo (offset/limit para paginar). Para 2+ archivos usa read_many_files en una sola llamada. IMPORTANTE: path debe ser un archivo, no un directorio — usa ls para explorar directorios.",
 		objectSchema(map[string]any{
-			"path":   stringProp("Ruta del archivo relativa o absoluta"),
+			"path":   stringProp("Ruta del archivo relativa o absoluta (no un directorio)"),
 			"offset": intProp("Línea inicial opcional (1-based)"),
 			"limit":  intProp("Máximo de líneas a leer opcional"),
 		}, "path"),
 		func(ctx context.Context, args readArgs) domain.ToolResult {
+			if isDir, _ := r.fs.IsDir(ctx, args.Path); isDir {
+				return domain.ToolResult{OK: false, Error: fmt.Errorf("leer %s: %s", args.Path, directoryErrorHint(args.Path, ""))}
+			}
 			data, err := r.fs.Read(ctx, args.Path)
 			if err != nil {
+				if isDirectoryError(err) {
+					return domain.ToolResult{OK: false, Error: fmt.Errorf("leer %s: %s — %w", args.Path, directoryErrorHint(args.Path, ""), err)}
+				}
 				return domain.ToolResult{OK: false, Error: fmt.Errorf("leer %s: %w", args.Path, err)}
 			}
 			content := string(data)
@@ -256,9 +262,20 @@ func (r *Registry) readManyTool() ToolDef {
 			}
 			var builder strings.Builder
 			for i, p := range args.Paths {
+				if isDir, _ := r.fs.IsDir(ctx, p); isDir {
+					fmt.Fprintf(&builder, "=== %s ===\nERROR: %s\n", p, directoryErrorHint(p, ""))
+					if i < len(args.Paths)-1 {
+						builder.WriteString("\n")
+					}
+					continue
+				}
 				data, err := r.fs.Read(ctx, p)
 				if err != nil {
-					fmt.Fprintf(&builder, "=== %s ===\nERROR: %v\n", p, err)
+					if isDirectoryError(err) {
+						fmt.Fprintf(&builder, "=== %s ===\nERROR: %s — %v\n", p, directoryErrorHint(p, ""), err)
+					} else {
+						fmt.Fprintf(&builder, "=== %s ===\nERROR: %v\n", p, err)
+					}
 				} else {
 					fmt.Fprintf(&builder, "=== %s ===\n%s\n", p, string(data))
 				}
@@ -276,13 +293,31 @@ type writeArgs struct {
 }
 
 func (r *Registry) writeTool() ToolDef {
-	return newGenericTool("write", "Crea o sobrescribe un archivo completo (crea directorios). Usa edit para cambios quirúrgicos o apply_patch para multi-archivo.",
+	return newGenericTool("write", "Crea o sobrescribe un archivo completo (crea directorios). Usa edit para cambios quirúrgicos o apply_patch para multi-archivo. IMPORTANTE: path debe ser una ruta de archivo (ej: index.html, src/main.go), NO un directorio.",
 		objectSchema(map[string]any{
-			"path":    stringProp("Ruta del archivo a escribir"),
+			"path":    stringProp("Ruta del archivo a escribir (debe incluir nombre de archivo, ej: index.html — no un directorio)"),
 			"content": stringProp("Contenido completo del archivo"),
 		}, "path", "content"),
 		func(ctx context.Context, args writeArgs) domain.ToolResult {
+			// Proactivo: si el path es un directorio existente, auto-corregir con nombre sugerido.
+			if isDir, _ := r.fs.IsDir(ctx, args.Path); isDir {
+				suggested := suggestFileName(args.Content)
+				corrected := filepath.Join(strings.TrimSuffix(args.Path, "/"), suggested)
+				if err := r.fs.Write(ctx, corrected, []byte(args.Content)); err == nil {
+					return domain.ToolResult{OK: true, Output: fmt.Sprintf("Auto-corregido: %q era un directorio → escrito en %s (%d bytes) [sugerencia: usa siempre una ruta de archivo como %q]", args.Path, corrected, len(args.Content), corrected)}
+				}
+				return domain.ToolResult{OK: false, Error: fmt.Errorf("escribir %s: %s", args.Path, directoryErrorHint(args.Path, suggested))}
+			}
 			if err := r.fs.Write(ctx, args.Path, []byte(args.Content)); err != nil {
+				if isDirectoryError(err) {
+					suggested := suggestFileName(args.Content)
+					corrected := filepath.Join(strings.TrimSuffix(args.Path, "/"), suggested)
+					// Un reintento automático con el archivo sugerido
+					if retryErr := r.fs.Write(ctx, corrected, []byte(args.Content)); retryErr == nil {
+						return domain.ToolResult{OK: true, Output: fmt.Sprintf("Auto-corregido tras error 'is a directory': %q → %s (%d bytes)", args.Path, corrected, len(args.Content))}
+					}
+					return domain.ToolResult{OK: false, Error: fmt.Errorf("escribir %s: %s — %w", args.Path, directoryErrorHint(args.Path, suggested), err)}
+				}
 				return domain.ToolResult{OK: false, Error: fmt.Errorf("escribir %s: %w", args.Path, err)}
 			}
 			return domain.ToolResult{OK: true, Output: fmt.Sprintf("Archivo %s escrito (%d bytes)", args.Path, len(args.Content))}
@@ -296,15 +331,21 @@ type editArgs struct {
 }
 
 func (r *Registry) editTool() ToolDef {
-	return newGenericTool("edit", "Reemplaza exactamente una ocurrencia de old_string por new_string. Debe aparecer exactamente 1 vez; si 0 o 2+ falla (re-lee con más contexto). Para multi-cambio usa apply_patch.",
+	return newGenericTool("edit", "Reemplaza exactamente una ocurrencia de old_string por new_string. Debe aparecer exactamente 1 vez; si 0 o 2+ falla (re-lee con más contexto). Para multi-cambio usa apply_patch. IMPORTANTE: path debe ser un archivo, no un directorio.",
 		objectSchema(map[string]any{
-			"path":       stringProp("Ruta del archivo a editar (relativa o absoluta)"),
+			"path":       stringProp("Ruta del archivo a editar (relativa o absoluta, no un directorio)"),
 			"old_string": stringProp("Texto exacto a reemplazar — debe aparecer exactamente 1 vez incluyendo indentación y saltos de línea"),
 			"new_string": stringProp("Texto de reemplazo — mantén indentación y estilo del archivo"),
 		}, "path", "old_string", "new_string"),
 		func(ctx context.Context, args editArgs) domain.ToolResult {
+			if isDir, _ := r.fs.IsDir(ctx, args.Path); isDir {
+				return domain.ToolResult{OK: false, Error: fmt.Errorf("leer %s: %s", args.Path, directoryErrorHint(args.Path, ""))}
+			}
 			data, err := r.fs.Read(ctx, args.Path)
 			if err != nil {
+				if isDirectoryError(err) {
+					return domain.ToolResult{OK: false, Error: fmt.Errorf("leer %s: %s — %w", args.Path, directoryErrorHint(args.Path, ""), err)}
+				}
 				return domain.ToolResult{OK: false, Error: fmt.Errorf("leer %s: %w", args.Path, err)}
 			}
 			content := string(data)
@@ -317,6 +358,9 @@ func (r *Registry) editTool() ToolDef {
 			}
 			content = strings.Replace(content, args.OldString, args.NewString, 1)
 			if err := r.fs.Write(ctx, args.Path, []byte(content)); err != nil {
+				if isDirectoryError(err) {
+					return domain.ToolResult{OK: false, Error: fmt.Errorf("escribir %s: %s — %w", args.Path, directoryErrorHint(args.Path, ""), err)}
+				}
 				return domain.ToolResult{OK: false, Error: fmt.Errorf("escribir %s: %w", args.Path, err)}
 			}
 			return domain.ToolResult{OK: true, Output: fmt.Sprintf("Editado %s", args.Path)}
@@ -389,6 +433,13 @@ func (r *Registry) bashTool() ToolDef {
 			"workdir": stringProp("Directorio de trabajo opcional (por defecto .)"),
 		}, "command"),
 		func(ctx context.Context, args bashArgs) domain.ToolResult {
+			if strings.TrimSpace(args.Command) == "" {
+				return domain.ToolResult{OK: false, Error: fmt.Errorf("command vacío — usa la tool `bash` con un comando shell válido (ej: \"ls -la\", \"go test ./...\")")}
+			}
+			// Si el modelo intentó un comando directo como herramienta, sugerir bash
+			if hint := shellHint(strings.Fields(args.Command)[0]); hint != "" {
+				// no bloqueamos, solo el hint ya está en Execute para tool desconocida
+			}
 			workdir := args.Workdir
 			if workdir == "" {
 				workdir = "."
@@ -510,13 +561,23 @@ func (r *Registry) applyBeginPatch(ctx context.Context, patch string) domain.Too
 			hunks = nil
 			return
 		}
+		// si el path es un directorio existente, dar hint accionable
+		if isDir, _ := r.fs.IsDir(ctx, clean); isDir {
+			outputs = append(outputs, fmt.Sprintf("✗ %s: %s", clean, directoryErrorHint(clean, suggestFileName(strings.Join(hunks, "\n")))))
+			hunks = nil
+			return
+		}
 		content := strings.Join(hunks, "\n")
 		dir := filepath.Dir(clean)
 		if dir != "." && dir != "" {
 			_, _ = r.executor.Execute(ctx, fmt.Sprintf("mkdir -p %q", dir), ".", nil)
 		}
 		if err := r.fs.Write(ctx, clean, []byte(content)); err != nil {
-			outputs = append(outputs, fmt.Sprintf("✗ %s: %v", clean, err))
+			if isDirectoryError(err) {
+				outputs = append(outputs, fmt.Sprintf("✗ %s: %s — %v", clean, directoryErrorHint(clean, suggestFileName(content)), err))
+			} else {
+				outputs = append(outputs, fmt.Sprintf("✗ %s: %v", clean, err))
+			}
 		} else {
 			outputs = append(outputs, fmt.Sprintf("✓ %s", clean))
 		}

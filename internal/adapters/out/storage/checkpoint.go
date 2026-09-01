@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -43,7 +44,61 @@ func NewCheckpointStore(root string) *CheckpointStore {
 	return &CheckpointStore{root: root}
 }
 
+// isGitRepo detecta si workspace es un repo git.
+func isGitRepo(workspace string) bool {
+	if _, err := os.Stat(filepath.Join(workspace, ".git")); err == nil {
+		return true
+	}
+	return false
+}
+
+// gitChangedFiles lista archivos modificados + untracked via git (incremental, opencode-style).
+func gitChangedFiles(ctx context.Context, workspace string) []string {
+	var out []string
+	// git diff --name-only (staged + unstaged)
+	cmd := exec.CommandContext(ctx, "git", "-C", workspace, "diff", "--name-only", "HEAD")
+	if b, err := cmd.Output(); err == nil {
+		for line := range strings.SplitSeq(strings.TrimSpace(string(b)), "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" {
+				out = append(out, line)
+			}
+		}
+	}
+	// git diff --name-only (unstaged)
+	cmd2 := exec.CommandContext(ctx, "git", "-C", workspace, "diff", "--name-only")
+	if b, err := cmd2.Output(); err == nil {
+		for line := range strings.SplitSeq(strings.TrimSpace(string(b)), "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" && !contains(out, line) {
+				out = append(out, line)
+			}
+		}
+	}
+	// untracked
+	cmd3 := exec.CommandContext(ctx, "git", "-C", workspace, "ls-files", "--others", "--exclude-standard")
+	if b, err := cmd3.Output(); err == nil {
+		for line := range strings.SplitSeq(strings.TrimSpace(string(b)), "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" && !contains(out, line) {
+				out = append(out, line)
+			}
+		}
+	}
+	return out
+}
+
+func contains(s []string, v string) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
 // Create toma un snapshot del workspace bajo la sesión indicada.
+// Si es repo git, usa git diff incremental (rápido); si no, fallback a WalkDir full (forgen README: siempre funciona).
 func (s *CheckpointStore) Create(ctx context.Context, workspace, sessionID string) (domain.Checkpoint, error) {
 	id := time.Now().Format("20060102150405.000000000")
 	dest := filepath.Join(s.root, sessionID, id)
@@ -59,6 +114,54 @@ func (s *CheckpointStore) Create(ctx context.Context, workspace, sessionID strin
 	}
 
 	var total int64
+	// Git incremental path: solo archivos cambiados
+	if isGitRepo(workspace) {
+		changed := gitChangedFiles(ctx, workspace)
+		if len(changed) > 0 {
+			for _, rel := range changed {
+				if strings.HasPrefix(rel, "..") {
+					continue
+				}
+				src := filepath.Join(workspace, rel)
+				info, err := os.Stat(src)
+				if err != nil || info.IsDir() || info.Size() > 4<<20 {
+					continue
+				}
+				data, err := os.ReadFile(src)
+				if err != nil {
+					continue
+				}
+				out := filepath.Join(dest, rel)
+				if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+					continue
+				}
+				if err := os.WriteFile(out, data, 0o644); err != nil {
+					continue
+				}
+				total += int64(len(data))
+				manifest.Files = append(manifest.Files, rel)
+			}
+			// Si hay cambios git, ya terminamos (no WalkDir)
+			if len(manifest.Files) > 0 {
+				data, err := json.MarshalIndent(manifest, "", "  ")
+				if err != nil {
+					return domain.Checkpoint{}, err
+				}
+				if err := os.WriteFile(filepath.Join(dest, "manifest.json"), data, 0o600); err != nil {
+					return domain.Checkpoint{}, err
+				}
+				return domain.Checkpoint{
+					ID:         id,
+					SessionID:  sessionID,
+					Workspace:  workspace,
+					CreatedAt:  time.Now(),
+					FileCount:  len(manifest.Files),
+					TotalBytes: total,
+				}, nil
+			}
+		}
+		// Si no hay cambios git o falló, fallback a WalkDir (mantiene compat)
+	}
 	_ = filepath.WalkDir(workspace, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil

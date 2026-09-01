@@ -106,7 +106,7 @@ type SubAgentRegistry struct {
 func DefaultSubAgentRegistry() *SubAgentRegistry {
 	return &SubAgentRegistry{Agents: map[TaskType]SubAgentConfig{
 		TaskTypeExplore:  {Type: TaskTypeExplore, Name: "Explorador", Description: "Explora el código base", Tools: []string{"read", "glob", "grep", "ls"}, Prompt: "Eres un explorador de código. No modifiques código.", MaxTurns: 20, Timeout: 120},
-		TaskTypePlan:     {Type: TaskTypePlan, Name: "Planificador", Description: "Diseña soluciones", Tools: []string{"read", "glob", "grep", "ls", "write"}, Prompt: "Eres un planificador técnico.", MaxTurns: 30, Timeout: 180},
+		TaskTypePlan:     {Type: TaskTypePlan, Name: "Planificador", Description: "Diseña soluciones", Tools: []string{"read", "glob", "grep", "ls", "todowrite", "update_plan", "ask_question", "exit_plan_mode"}, Prompt: "Eres un planificador técnico. No codifiques — solo diseña el plan con update_plan y pregunta con ask_question si hay ambigüedad.", MaxTurns: 30, Timeout: 180},
 		TaskTypeBuild:    {Type: TaskTypeBuild, Name: "Constructor", Description: "Implementa código", Tools: []string{"read", "write", "edit", "bash", "glob", "grep", "ls"}, Prompt: "Eres un ingeniero que implementa código limpio.", MaxTurns: 50, Timeout: 300},
 		TaskTypeReview:   {Type: TaskTypeReview, Name: "Revisor", Description: "Revisa código", Tools: []string{"read", "glob", "grep", "ls", "bash"}, Prompt: "Eres un revisor experto.", MaxTurns: 20, Timeout: 120},
 		TaskTypeResearch: {Type: TaskTypeResearch, Name: "Investigador", Description: "Investiga temas técnicos", Tools: []string{"read", "glob", "grep", "ls", "web_fetch", "web_search"}, Prompt: "Eres un investigador técnico.", MaxTurns: 30, Timeout: 180},

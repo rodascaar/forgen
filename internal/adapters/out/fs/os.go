@@ -94,6 +94,13 @@ func (o *OSFileSystem) Write(_ context.Context, path string, data []byte) error 
 	if evalDir, err := filepath.EvalSymlinks(filepath.Dir(o.root)); err == nil {
 		_ = evalDir
 	}
+	// Si el destino existe y es un directorio, fallar con mensaje accionable
+	// (caso típico de modelos pequeños que pasan directorio en lugar de archivo).
+	if info, err := os.Stat(resolved); err == nil && info.IsDir() {
+		suggested := suggestFileNameForContent(string(data))
+		corrected := filepath.Join(strings.TrimSuffix(resolved, string(filepath.Separator)), suggested)
+		return fmt.Errorf("escribir %s: is a directory — la ruta es un directorio, no un archivo. Reintenta con %q", resolved, corrected)
+	}
 	if err := os.MkdirAll(filepath.Dir(resolved), 0o755); err != nil {
 		return fmt.Errorf("crear directorios de %s: %w", resolved, err)
 	}
@@ -101,6 +108,25 @@ func (o *OSFileSystem) Write(_ context.Context, path string, data []byte) error 
 		return fmt.Errorf("escribir %s: %w", resolved, err)
 	}
 	return nil
+}
+
+// suggestFileNameForContent duplica la heurística de tools para mensaje de error a bajo nivel.
+func suggestFileNameForContent(content string) string {
+	lower := strings.ToLower(content)
+	trimmed := strings.TrimSpace(content)
+	if strings.Contains(lower, "<!doctype") || strings.Contains(lower, "<html") {
+		return "index.html"
+	}
+	if strings.Contains(content, "package ") && strings.Contains(lower, "func main") {
+		return "main.go"
+	}
+	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+		return "data.json"
+	}
+	if strings.Contains(lower, "<") && strings.Contains(lower, ">") {
+		return "index.html"
+	}
+	return "index.html"
 }
 
 // Exists implementa ports.FileSystem.
@@ -113,6 +139,18 @@ func (o *OSFileSystem) Exists(_ context.Context, path string) (bool, error) {
 		return false, nil
 	}
 	return false, err
+}
+
+// IsDir implementa ports.FileSystem.
+func (o *OSFileSystem) IsDir(_ context.Context, path string) (bool, error) {
+	info, err := os.Stat(o.resolve(path))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return info.IsDir(), nil
 }
 
 // Glob implementa ports.FileSystem con soporte de patrones ** (doublestar).

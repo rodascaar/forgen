@@ -183,6 +183,8 @@ func NewApp(logger *slog.Logger) (*App, error) {
 	// Herramientas de planificación y delegación
 	registry.Register(apptodo.NewTool(todoStore))
 	registry.Register(appplan.NewTool(todoStore))
+	registry.Register(appplan.NewAskTool())
+	registry.Register(appplan.NewExitPlanTool())
 	registry.Register(apptask.NewTool(taskStore, taskExecutor))
 
 	// Inyectar Runner aislado para subagentes con tools filtradas por tipo (kimchi/opencode).

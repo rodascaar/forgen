@@ -4,6 +4,20 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-1.1.0/) y
 el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 
+## [0.1.26] - 2026-09-01
+
+### Añadido
+
+- **Robustez tool-calling para modelos pequeños (Gemma-4B, llama.cpp)**: `write` ya no falla con `is a directory` cuando el SLM pasa un directorio en lugar de archivo — auto-corrige a `index.html`/`main.go` según contenido y devuelve `Auto-corregido` (`internal/application/tools/registry.go`, `internal/adapters/out/fs/os.go` con `IsDir` + `suggestFileName`). `read`/`edit`/`read_many_files`/`apply_patch` y `bash` dan errores accionables (`la ruta "X" es un directorio... usa ls` / `command vacío`). Alias tolerante `file_path/filepath/file_content→path/content` en `helpers.go:normalizeArgs` para SLM que inventan nombres de campo.
+- **Schemas endurecidos para SLM**: descripciones imperativas `"debe incluir nombre de archivo, ej: index.html — NO un directorio"` y heurística `suggestFileName` para HTML/Go/JSON.
+- **Sampling y retry para TierLight**: `maxTokens TierLight 512→1024` (HTML largos), `fewShot` con ejemplo crítico `Test-local→Test-local/index.html`, `shouldRetrySmallModel` ampliado con `"dime la ruta exacta"/"especifica el nombre del archivo"` y helper `shouldRetryToolError` (`internal/application/agent/runner.go`).
+- **Plan estricto (claude-code)**: `readOnlyToolAllowlist` permite `write` solo a `.forgen/plans/*` vía `isPlanArtifactPath`; `ask_question`/`exit_plan_mode` nuevas tools (`internal/application/plan/interactive.go`) y `TaskTypePlan` corregido a `todowrite,update_plan,ask_question,exit_plan_mode` (sin `write` genérico) (`internal/core/domain/task.go`).
+- **Checkpoint incremental git**: `CheckpointStore.Create` usa `git diff --name-only` + `ls-files --others` si es repo git (opencode/gemini style, O(diff) vs O(workspace)), fallback a `WalkDir` full si no es repo (`internal/adapters/out/storage/checkpoint.go`).
+
+### Cambiado
+
+- **`FileSystem` con `IsDir`**: nuevo método `IsDir` en `ports.FileSystem` con implementaciones `OSFileSystem` y `SyncingFileSystem` (`internal/core/ports/system.go`, `internal/adapters/out/fs/os.go`, `internal/adapters/out/lsp/syncfs.go`).
+
 ## [0.1.24] - 2026-08-31
 
 ### Añadido

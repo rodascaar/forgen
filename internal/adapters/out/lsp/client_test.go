@@ -120,6 +120,7 @@ func (f *fakeFS) Write(_ context.Context, path string, data []byte) error {
 	return nil
 }
 func (f *fakeFS) Exists(context.Context, string) (bool, error) { return true, nil }
+func (f *fakeFS) IsDir(context.Context, string) (bool, error) { return false, nil }
 func (f *fakeFS) Glob(context.Context, string) ([]string, error) {
 	return nil, nil
 }

@@ -13,6 +13,8 @@ type FileSystem interface {
 	Write(ctx context.Context, path string, data []byte) error
 	// Exists indica si una ruta existe.
 	Exists(ctx context.Context, path string) (bool, error)
+	// IsDir indica si una ruta existe y es un directorio.
+	IsDir(ctx context.Context, path string) (bool, error)
 	// Glob devuelve las rutas que coinciden con el patrón.
 	Glob(ctx context.Context, pattern string) ([]string, error)
 	// Search busca un patrón regex en los archivos de root (respetando
