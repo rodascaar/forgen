@@ -4,7 +4,7 @@ package app
 // Se puede inyectar en build con:
 //
 //	go build -ldflags "-X github.com/rodascaar/forgen/internal/app.Version=v1.2.3"
-var Version = "0.2.1"
+var Version = "0.2.2"
 
 // Commit es el hash de git del build (inyectado vía ldflags).
 var Commit = "dev"

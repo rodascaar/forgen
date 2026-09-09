@@ -4,6 +4,12 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-1.1.0/) y
 el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 
+## [0.2.2] - 2026-09-09
+
+### Corregido
+
+- **CI windows**: tests del sandbox asumían separadores Unix (`"/repo"` literal vs `filepath.Clean` que devuelve `\` en Windows). Fixtures con `filepath.FromSlash` y expectativas construidas con los mismos helpers — válidas en los 3 SO.
+
 ## [0.2.1] - 2026-09-09
 
 ### Corregido
