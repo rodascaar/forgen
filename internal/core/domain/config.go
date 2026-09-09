@@ -107,8 +107,24 @@ func DefaultTheme() Theme {
 
 // ExecutionConfig configura el modo de ejecución de comandos.
 type ExecutionConfig struct {
-	Sandbox     string `yaml:"sandbox"` // "" | docker
-	DockerImage string `yaml:"docker_image"`
+	Sandbox string `yaml:"sandbox"` // ""|native|docker|off — "" = native si hay backend, local si no
+	// Mode es la política del sandbox: read-only | workspace-write | danger-full-access.
+	Mode string `yaml:"mode,omitempty"`
+	// Network da red a los comandos confinados (binario on/off, default false).
+	Network bool `yaml:"network,omitempty"`
+	// ExtraWritable suma raíces escribibles (caches de toolchain fuera del ws).
+	ExtraWritable []string `yaml:"extra_writable,omitempty"`
+	DockerImage   string   `yaml:"docker_image"`
+}
+
+// SandboxBackendName normaliza el backend pedido.
+func (c ExecutionConfig) SandboxBackendName() string {
+	switch c.Sandbox {
+	case "docker", "native", "off":
+		return c.Sandbox
+	default:
+		return "native"
+	}
 }
 
 // CompactionConfig controla el comportamiento de compactación de contexto.

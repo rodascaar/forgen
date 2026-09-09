@@ -95,6 +95,7 @@ Escribir es siempre seguro: **ninguna letra sola abre menús**. Todo es `/comand
 | `/new` | Inicia una sesión nueva |
 | `/resume` | Reanuda una sesión por ID |
 | `/todo` `/plan` | Ver lista de tareas |
+| `/approve` | Aprueba el plan pendiente (gate plan→build) |
 | `/task` | Ver sub-agentes |
 | `/mcp` | Ver servidores MCP |
 | `/orchestration` `/orch` | Routing multi-modelo |
@@ -195,7 +196,7 @@ forgen mcp test filesystem
 - **Búsqueda web:** `web_search` (Brave) + `web_fetch` (extrae texto de URL). Config: `search.provider: brave`.
 - **Proyectos multi-sesión:** `forgen ferment new "Build Tetris"` · `forgen ferment list/progress/switch/export` — snapshot atómico + log append-only, se rehidrata al reabrir.
 - **Skills:** carpetas con `SKILL.md` en `~/.config/forgen/skills/` o `.forgen/skills/` — el catálogo se inyecta al prompt y el agente usa `read_skill`.
-- **Seguridad:** keys en keychain, nunca en logs; `permissions: auto` bloquea `sudo`/`rm -rf /`/`chmod 777`; `forgen trace` genera reporte sin secretos; `execution.sandbox: docker` aísla `bash`.
+- **Seguridad:** keys en keychain, nunca en logs; `permissions: auto` bloquea `sudo`/`rm -rf /`/`chmod 777`; sandbox nativo a nivel SO sin Docker (Seatbelt macOS / bwrap Linux, `execution.mode: workspace-write`, `.git` siempre read-only, red OFF por defecto; `forgen debug sandbox -- <cmd>` lo prueba); gate plan→build (`/approve`); `forgen trace` genera reporte sin secretos.
 
 ## Contribuir
 

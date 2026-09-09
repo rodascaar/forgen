@@ -61,5 +61,6 @@ Ejecuta 'forgen' sin argumentos para la interfaz interactiva.`,
 	root.AddCommand(newPermissionsCommand(app))
 	root.AddCommand(newCompactCommand(app))
 	root.AddCommand(newContextCommand(app))
+	root.AddCommand(newDebugCommand(app))
 	return root, nil
 }

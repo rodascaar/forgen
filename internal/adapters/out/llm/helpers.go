@@ -2,6 +2,7 @@ package llm
 
 import (
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -26,22 +27,34 @@ func parseArgumentsTolerant(raw string, target map[string]any) error {
 	if raw == "" {
 		return nil
 	}
+	var out map[string]any
 	// 1) Intento nativo
-	if err := json.Unmarshal([]byte(raw), target); err == nil {
+	if err := json.Unmarshal([]byte(raw), &out); err == nil {
+		for k, v := range out {
+			target[k] = v
+		}
 		return nil
 	}
 	// 2) Reparaciones comunes para modelos pequeños
 	fixed := repairJSON(raw)
-	if err := json.Unmarshal([]byte(fixed), target); err == nil {
+	out = nil
+	if err := json.Unmarshal([]byte(fixed), &out); err == nil {
+		for k, v := range out {
+			target[k] = v
+		}
 		return nil
 	}
 	// 3) Fallback: intentar extraer primer objeto JSON válido
 	if obj := extractFirstJSON(raw); obj != "" {
-		if err := json.Unmarshal([]byte(obj), target); err == nil {
+		out = nil
+		if err := json.Unmarshal([]byte(obj), &out); err == nil {
+			for k, v := range out {
+				target[k] = v
+			}
 			return nil
 		}
 	}
-	return json.Unmarshal([]byte(raw), target) // devuelve error original para logging
+	return json.Unmarshal([]byte(raw), &out) // devuelve error original para logging
 }
 
 // repairJSON aplica correcciones heurísticas a JSON malformado.
@@ -49,20 +62,20 @@ func repairJSON(s string) string {
 	// Eliminar markdown code fences
 	s = regexp.MustCompile("^```(?:json)?\\s*").ReplaceAllString(s, "")
 	s = regexp.MustCompile("\\s*```$").ReplaceAllString(s, "")
+	s = strings.TrimSpace(s)
 
-	// Comillas simples -> dobles (solo en keys y strings, no dentro de valores ya dobles)
-	s = regexp.MustCompile(`'(\w+)'\s*:`).ReplaceAllString(s, `"$1":`)
-	s = regexp.MustCompile(`:\s*'([^']*)'`).ReplaceAllString(s, `:"$1"`)
+	// Comillas simples -> dobles en keys ('path': -> "path":)
+	s = regexp.MustCompile(`'([a-zA-Z_][a-zA-Z0-9_]*)'\s*:`).ReplaceAllString(s, `"$1":`)
+	// Valores con comillas simples (: 'valor' -> : "valor")
+	s = regexp.MustCompile(`:\s*'([^'\n]*)'`).ReplaceAllString(s, `:"$1"`)
 
 	// Trailing commas antes de } o ]
 	s = regexp.MustCompile(`,\s*}`).ReplaceAllString(s, "}")
 	s = regexp.MustCompile(`,\s*]`).ReplaceAllString(s, "]")
 
-	// Keys sin comillas (word: -> "word":)
-	s = regexp.MustCompile(`([a-zA-Z_][a-zA-Z0-9_]*)\s*:`).ReplaceAllString(s, `"$1":`)
-
-	// Boolean/number/null sin comillas en valores
-	s = regexp.MustCompile(`:\s*(true|false|null)([,\}\]])`).ReplaceAllString(s, `:"$1"$2`)
+	// Keys sin comillas al inicio de objeto o tras { , (evita doble-citar las ya citadas).
+	// Solo aplica cuando la key NO está precedida por " (lookbehind manual vía grupos).
+	s = regexp.MustCompile(`([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:`).ReplaceAllString(s, `$1"$2":`)
 
 	return strings.TrimSpace(s)
 }
@@ -234,6 +247,61 @@ func levenshtein(a, b string) int {
 		prev = curr
 	}
 	return prev[len(b)]
+}
+
+// RecoverToolCallsFromText es el fallback público: extrae tool calls del texto
+// libre del modelo, los parsea con tolerancia y corrige typos con fuzzy match.
+// Devuelve llamadas listas para ejecutar. Vacío si no hay nada recuperable.
+func RecoverToolCallsFromText(text string, tools []domain.Tool) []domain.ToolCall {
+	if strings.TrimSpace(text) == "" || len(tools) == 0 {
+		return nil
+	}
+	avail := make(map[string]bool, len(tools))
+	for _, t := range tools {
+		avail[t.Name] = true
+	}
+	pairs := extractToolCallsFromText(text, avail)
+	// Si no hubo match estricto, intentar también fuzzy sobre nombres parecidos:
+	// buscar cualquier {"name": "<x>", ...} y mapear con Levenshtein.
+	if len(pairs) == 0 {
+		fuzzyRe := regexp.MustCompile(`(?s)\{\s*"name"\s*:\s*"([^"]+)"`)
+		for _, m := range fuzzyRe.FindAllStringSubmatch(text, -1) {
+			if len(m) < 2 {
+				continue
+			}
+			mapped := matchToolFuzzy(m[1], tools)
+			if mapped == "" || mapped == strings.ToLower(strings.TrimSpace(m[1])) && !avail[m[1]] {
+				continue
+			}
+			if !avail[mapped] {
+				continue
+			}
+			// Extraer objeto JSON que contiene ese name como args candidatos.
+			if obj := extractFirstJSON(m[0] + text[len(m[0]):]); obj != "" {
+				if _, args := extractNameArgs(obj); args != "" {
+					pairs = append(pairs, [2]string{mapped, args})
+				}
+			}
+		}
+	}
+	var out []domain.ToolCall
+	for i, p := range pairs {
+		name := matchToolFuzzy(p[0], tools)
+		args := map[string]any{}
+		raw := p[1]
+		if raw == "" || raw == "null" {
+			raw = "{}"
+		}
+		if err := parseArgumentsTolerant(raw, args); err != nil {
+			continue
+		}
+		out = append(out, domain.ToolCall{
+			ID:        fmt.Sprintf("recovered_%d", i),
+			Name:      name,
+			Arguments: args,
+		})
+	}
+	return out
 }
 
 func min(a, b, c int) int {

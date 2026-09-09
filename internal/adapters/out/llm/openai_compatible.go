@@ -139,7 +139,7 @@ func (o *OpenAICompatible) StreamChat(ctx context.Context, request ports.ChatReq
 	}
 	defer func() { _ = response.Body.Close() }()
 
-	accumulator := newOpenAIToolAccumulator(request.Model, handler)
+	accumulator := newOpenAIToolAccumulator(request.Model, handler).withTools(request.Tools)
 
 	err = o.client.StreamSSE(response.Body, func(data string) error {
 		var chunk openAIChunk
@@ -242,10 +242,12 @@ type pendingCall struct {
 type openAIToolAccumulator struct {
 	model      domain.Model
 	handler    ports.StreamHandler
+	tools      []domain.Tool
 	toolCalls  map[int]*pendingCall
 	order      []int
 	finishSeen bool
 	lengthSeen bool
+	textParts  []string
 	logger     *slog.Logger
 }
 
@@ -258,9 +260,16 @@ func newOpenAIToolAccumulator(model domain.Model, handler ports.StreamHandler) *
 	}
 }
 
+// withTools inyecta el catálogo para fuzzy-match y fallback de texto.
+func (a *openAIToolAccumulator) withTools(tools []domain.Tool) *openAIToolAccumulator {
+	a.tools = tools
+	return a
+}
+
 func (a *openAIToolAccumulator) process(chunk openAIChunk) error {
 	for _, choice := range chunk.Choices {
 		if choice.Delta.Content != nil {
+			a.textParts = append(a.textParts, *choice.Delta.Content)
 			if err := a.handler(ports.TextDeltaEvent{Text: *choice.Delta.Content}); err != nil {
 				return err
 			}
@@ -309,17 +318,42 @@ func (a *openAIToolAccumulator) process(chunk openAIChunk) error {
 }
 
 func (a *openAIToolAccumulator) finish() error {
+	emitted := 0
 	for _, index := range a.order {
 		pending := a.toolCalls[index]
 		if pending.call.Name == "" {
 			a.logger.Warn("llm.tool_call_incompleto", "model", a.model.Key())
 			continue
 		}
-		if err := parseArguments(pending.arguments, pending.call.Arguments); err != nil {
+		// Fuzzy-match por typos (reed→read, etc.) antes de validar.
+		if len(a.tools) > 0 {
+			pending.call.Name = matchToolFuzzy(pending.call.Name, a.tools)
+		}
+		if err := parseArgumentsTolerant(pending.arguments, pending.call.Arguments); err != nil {
 			a.logger.Warn("llm.tool_call_args_inválidos", "model", a.model.Key(), "err", err)
+			// Emitir igualmente con args vacíos: el runner reportará el error
+			// como tool result y el modelo puede autocorregirse (antes se emitía siempre).
 		}
 		if err := a.handler(ports.ToolCallEvent{Call: *pending.call}); err != nil {
 			return err
+		}
+		emitted++
+	}
+	// Fallback: el modelo "habló" el tool call en texto en vez de emitirlo.
+	// Recupera desde el texto acumulado para no perder el turno.
+	if emitted == 0 && len(a.tools) > 0 {
+		joined := ""
+		for _, p := range a.textParts {
+			joined += p
+		}
+		if recovered := RecoverToolCallsFromText(joined, a.tools); len(recovered) > 0 {
+			a.logger.Info("llm.tool_call_recovered_from_text", "model", a.model.Key(), "count", len(recovered))
+			for _, rc := range recovered {
+				if err := a.handler(ports.ToolCallEvent{Call: rc}); err != nil {
+					return err
+				}
+				emitted++
+			}
 		}
 	}
 	reason := domain.FinishReasonStop

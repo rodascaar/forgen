@@ -991,6 +991,27 @@ func (m Model) handleSlash(command string) (tea.Model, tea.Cmd) {
 		}
 		m.append("notice", compactContextLine(sess, m.app))
 		return m, nil
+	case "/approve":
+		if m.sessionID == "" {
+			m.append("notice", "Sin sesión activa — nada que aprobar.")
+			return m, nil
+		}
+		sess, err := m.app.SessionService.Resume(context.Background(), m.sessionID)
+		if err != nil {
+			m.append("error", fmt.Sprintf("approve: %v", err))
+			return m, nil
+		}
+		if sess.PlanStatus != "pending" {
+			m.append("notice", "No hay plan pendiente (estado: "+planStatusLabel(sess.PlanStatus)+").")
+			return m, nil
+		}
+		sess.PlanStatus = "approved"
+		if err := m.app.SessionService.Save(context.Background(), sess); err != nil {
+			m.append("error", fmt.Sprintf("approve: %v", err))
+			return m, nil
+		}
+		m.append("notice", "Plan aprobado — build puede ejecutar mutaciones. Usa Tab para cambiar a build.")
+		return m, nil
 	case "/trace":
 		// Diagnóstico: qué modelo se resolvería para la próxima petición, tamaño
 		// del contexto y tools disponibles. Ayuda a ver si se está usando un modelo
@@ -1336,7 +1357,19 @@ func compactContextLine(sess domain.Session, app *apppkg.App) string {
 		limit = md.ContextLimit
 	}
 	pct := float64(tokens) / float64(limit) * 100
-	return fmt.Sprintf("Context: %d msgs · %d/%d tokens (%.1f%%) · compactions %d boundary %d summary %d chars", len(sess.Messages), tokens, limit, pct, sess.CompactionCount, sess.CompactBoundary, len(sess.CompactionSummary))
+	return fmt.Sprintf("Context: %d msgs · %d/%d tokens (%.1f%%) · compactions %d boundary %d summary %d chars · plan %s", len(sess.Messages), tokens, limit, pct, sess.CompactionCount, sess.CompactBoundary, len(sess.CompactionSummary), planStatusLabel(sess.PlanStatus))
+}
+
+// planStatusLabel etiqueta legible del gate plan→build.
+func planStatusLabel(status string) string {
+	switch status {
+	case "pending":
+		return "pending (bloquea mutaciones hasta /approve)"
+	case "approved":
+		return "approved"
+	default:
+		return "sin plan"
+	}
 }
 
 // startRun arma el comando del agente en segundo plano + el ticker del spinner.
@@ -1604,6 +1637,7 @@ func (m Model) renderHelp() string {
 		"  /sessions   Retoma una sesión guardada",
 		"  /new        Inicia una sesión nueva",
 		"  /todo, /plan Visualiza la lista de tareas (todowrite)",
+		"  /approve     Aprueba el plan pendiente (gate plan→build)",
 		"  /orchestration  Activa el routing multi-modelo y elige modelos de tu API",
 		"  /task       Lista sub-agentes",
 		"  /mcp        MCP servidores",

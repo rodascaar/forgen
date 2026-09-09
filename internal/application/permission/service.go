@@ -3,9 +3,11 @@ package permission
 
 import (
 	"context"
-	"fmt"
+	"encoding/json"
 	"path/filepath"
+	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/rodascaar/forgen/internal/core/domain"
@@ -175,7 +177,7 @@ func argsEqual(a, b map[string]any) bool {
 		if !ok {
 			return false
 		}
-		if fmt.Sprintf("%v", va) != fmt.Sprintf("%v", vb) {
+		if !valuesEqual(va, vb) {
 			return false
 		}
 	}
@@ -185,11 +187,94 @@ func argsEqual(a, b map[string]any) bool {
 func argsSubset(rule, call map[string]any) bool {
 	for key, ruleValue := range rule {
 		callValue, ok := call[key]
-		if !ok || fmt.Sprintf("%v", callValue) != fmt.Sprintf("%v", ruleValue) {
+		if !ok || !valuesEqual(ruleValue, callValue) {
 			return false
 		}
 	}
 	return true
+}
+
+// valuesEqual compara valores de argumentos con normalización: los números
+// JSON decodifican como float64 pero las reglas pueden guardar int (y viceversa),
+// y los strings se comparan recortados. Evita el frágil fmt "%v" (1 vs 1.0,
+// mapas con orden distinto, etc). Recursivo para mapas/slices anidados.
+func valuesEqual(a, b any) bool {
+	na, oka := toFloat(a)
+	nb, okb := toFloat(b)
+	if oka && okb {
+		return na == nb
+	}
+	if oka != okb {
+		// Uno es número y el otro no: comparar como strings solo si el no-numérico
+		// es la representación textual del número ("5" vs 5).
+		if oka {
+			if s, ok := b.(string); ok {
+				return strings.TrimSpace(s) == strings.TrimSpace(floatString(na))
+			}
+			return false
+		}
+		if s, ok := a.(string); ok {
+			return strings.TrimSpace(s) == strings.TrimSpace(floatString(nb))
+		}
+		return false
+	}
+	switch av := a.(type) {
+	case string:
+		bv, ok := b.(string)
+		return ok && strings.TrimSpace(av) == strings.TrimSpace(bv)
+	case map[string]any:
+		bv, ok := b.(map[string]any)
+		return ok && argsEqual(av, bv)
+	case []any:
+		bv, ok := b.([]any)
+		if !ok || len(av) != len(bv) {
+			return false
+		}
+		for i := range av {
+			if !valuesEqual(av[i], bv[i]) {
+				return false
+			}
+		}
+		return true
+	default:
+		return reflect.DeepEqual(a, b)
+	}
+}
+
+// toFloat normaliza int/int64/float64/json.Number a float64.
+func toFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case int:
+		return float64(n), true
+	case int8:
+		return float64(n), true
+	case int16:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case uint:
+		return float64(n), true
+	case uint64:
+		return float64(n), true
+	case float32:
+		return float64(n), true
+	case float64:
+		return n, true
+	case json.Number:
+		if f, err := n.Float64(); err == nil {
+			return f, true
+		}
+	}
+	return 0, false
+}
+
+func floatString(f float64) string {
+	if f == float64(int64(f)) {
+		return strconv.FormatInt(int64(f), 10)
+	}
+	return strconv.FormatFloat(f, 'f', -1, 64)
 }
 
 func (s *Service) isDangerous(call domain.ToolCall) bool {

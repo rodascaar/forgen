@@ -132,6 +132,11 @@ type Session struct {
 	CompactionCount int `json:"compaction_count,omitempty"`
 	// CompactionSummary guarda el último resumen para reconstrucción sin LLM extra.
 	CompactionSummary string `json:"compaction_summary,omitempty"`
+	// PlanStatus es el gate plan→build: "" (sin plan) | "pending" (plan sin
+	// aprobar: build no ejecuta mutaciones) | "approved" (plan aprobado).
+	PlanStatus string `json:"plan_status,omitempty"`
+	// PlanSummary guarda el resumen del plan aprobado (trazabilidad).
+	PlanSummary string `json:"plan_summary,omitempty"`
 }
 
 // LastMessage devuelve el último mensaje de la sesión, si existe.

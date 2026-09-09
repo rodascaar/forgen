@@ -68,9 +68,8 @@ func samplingForTier(tier domain.Tier) (temp float64, topP *float64, topK *int) 
 }
 
 // maxTokensForTier devuelve el máximo de tokens según tier y metadata del modelo.
-// Light: 1024 tokens (subido de 512 para HTML/tool calls largos como el bug reportado)
-// Standard: 1024 tokens
-// Heavy: 4096 tokens (defaultMaxTokens)
+// Light: 2048 · Standard: 4096 · Heavy: 8192 (subidos desde 1024/1024/4096:
+// con 1024 un apply_patch multi-archivo se truncaba por `length` y el turno se perdía).
 // Si ModelMetadata.MaxOutput está definido y es > 0, se usa ese valor.
 func maxTokensForTier(tier domain.Tier, meta domain.ModelMetadata) int {
 	if meta.MaxOutput > 0 {
@@ -78,11 +77,11 @@ func maxTokensForTier(tier domain.Tier, meta domain.ModelMetadata) int {
 	}
 	switch tier {
 	case domain.TierLight:
-		return 1024
+		return 2048
 	case domain.TierHeavy:
-		return defaultMaxTokens
+		return 8192
 	default: // TierStandard
-		return 1024
+		return 4096
 	}
 }
 
@@ -255,13 +254,25 @@ func (r *Runner) Run(ctx context.Context, input RunInput) (RunResult, error) {
 	tools := r.visibleTools(input.Agent)
 
 	// 3.1 Auto-compaction pre-turn si ya estamos en overflow (evita prompt_too_long).
-	if err := r.maybeCompact(ctx, &input.Session, ""); err != nil {
+	// Medición real con system+tools para no compactar tarde (alucinaciones).
+	if err := r.maybeCompactWithContext(ctx, &input.Session, "", systemPrompt, tools); err != nil {
 		r.logger.Warn("auto-compact pre-turn", "err", err)
 	}
 
 	totalToolCalls := 0
 	for iteration := 0; iteration < r.maxIterations; iteration++ {
 		messages := r.buildMessages(systemPrompt, input.Session)
+
+		// Guard pre-LLM: si el request ya supera el 95% (system+tools+msgs),
+		// compactar y reconstruir antes de llamar al provider (evita prompt_too_long
+		// a mitad de un turno largo de 50 iteraciones).
+		if session.UsageRatio(input.Session, systemPrompt, tools, input.Session.Model, r.compaction.ModelMetadata) >= session.ForceThreshold {
+			r.logger.Warn("auto-compact pre-llm forced", "session", input.Session.ID, "iteration", iteration)
+			if err := r.maybeCompactWithContext(ctx, &input.Session, "", systemPrompt, tools); err != nil {
+				r.logger.Warn("auto-compact pre-llm", "err", err)
+			}
+			messages = r.buildMessages(systemPrompt, input.Session)
+		}
 
 		// Emitir eventos de observabilidad.
 		r.logger.Info("llm.request", "session", input.Session.ID, "iteration", iteration,
@@ -290,6 +301,18 @@ func (r *Runner) Run(ctx context.Context, input RunInput) (RunResult, error) {
 			}, nil
 		}
 
+		// Plan gate (claude-code strict): sesión con plan pendiente → build no
+		// ejecuta mutaciones hasta aprobar (exit_plan_mode o /approve).
+		if gated := r.applyPlanGate(input.Session, input.Agent, response.toolCalls); gated != nil {
+			assistantMessage := domain.NewAssistantWithToolCalls(response.text, response.toolCalls)
+			input.Session.Messages = append(input.Session.Messages, assistantMessage)
+			input.Session.Messages = append(input.Session.Messages, gated...)
+			if err := r.sessions.Save(ctx, input.Session); err != nil {
+				return RunResult{}, err
+			}
+			continue
+		}
+
 		// Ejecutar herramientas y recoger resultados.
 		assistantMessage := domain.NewAssistantWithToolCalls(response.text, response.toolCalls)
 		toolMessages, err := r.executeTools(ctx, input.Session.ID, input.Workspace, input.Agent, response.toolCalls)
@@ -298,11 +321,23 @@ func (r *Runner) Run(ctx context.Context, input RunInput) (RunResult, error) {
 		}
 		input.Session.Messages = append(input.Session.Messages, assistantMessage)
 		input.Session.Messages = append(input.Session.Messages, toolMessages...)
+		// Plan status: plan artifact escrito → pending; exit_plan_mode OK → approved.
+		r.updatePlanStatus(&input.Session, input.Agent, response.toolCalls, toolMessages)
+		// Escalado mid-loop: 3 errores consecutivos → guía correctiva inyectada.
+		if streak := consecutiveToolErrors(toolMessages); streak >= 3 {
+			guide := domain.NewTextMessage(domain.RoleUser, "GUÍA AUTOMÁTICA: llevas 3+ errores de herramientas seguidos. Detente, re-lee los outputs con `read`/`git_diff`, formula una hipótesis distinta y pide confirmación con `ask_question` si sigues atascado. No repitas la misma llamada.")
+			input.Session.Messages = append(input.Session.Messages, guide)
+			r.messenger.Notice(input.Session.ID, "⚠ 3 errores seguidos — inyectada guía correctiva para romper el ciclo.")
+			r.logger.Warn("tool.error_streak", "session", input.Session.ID, "streak", streak)
+		} else {
+			recordToolErrorOutcome(true, "")
+		}
 		if err := r.sessions.Save(ctx, input.Session); err != nil {
 			return RunResult{}, err
 		}
 		// Auto-compaction tras tool results si superamos umbral (no bloquea si falla).
-		if err := r.maybeCompact(ctx, &input.Session, ""); err != nil {
+		// Con medición real system+tools.
+		if err := r.maybeCompactWithContext(ctx, &input.Session, "", systemPrompt, tools); err != nil {
 			r.logger.Warn("auto-compact post-tools", "err", err)
 		}
 	}
@@ -326,6 +361,7 @@ type llmResponse struct {
 	hasToolCalls  bool
 	toolCallCount int
 	usage         domain.Usage
+	reason        domain.FinishReason
 }
 
 // llmTimeout acota cada llamada al proveedor para que una API colgada no
@@ -338,11 +374,13 @@ func (r *Runner) callLLM(ctx context.Context, sessionID string, model domain.Mod
 	var mutex sync.Mutex
 	var builder strings.Builder
 	builder.Grow(8192)
-	// Token budget & cost guard (7.6.3) — estima y warn si >80%
-	budgetTokens := session.SessionTokens(domain.Session{Messages: messages})
-	if budgetTokens > 90000 {
-		r.logger.Warn("token.budget_high", "session", sessionID, "tokens", budgetTokens, "hint", "consider /compact or fresh session")
-		r.messenger.Notice(sessionID, fmt.Sprintf("⚠ Tokens altos: %d — considera /compact o sesión nueva para ahorrar coste", budgetTokens))
+	// Token budget & cost guard relativo al modelo (antes fijo >90000: un 32k
+	// reventaba mucho antes sin avisar). Mide system+tools+msgs reales.
+	budgetTokens := session.SessionTokens(domain.Session{Messages: messages}) + session.ToolsOverhead(tools)
+	usable, _ := session.UsableBudget(model, r.compaction.ModelMetadata, 1.0)
+	if usable > 0 && float64(budgetTokens) >= float64(usable)*session.WarnThreshold {
+		r.logger.Warn("token.budget_high", "session", sessionID, "tokens", budgetTokens, "usable", usable, "hint", "consider /compact or fresh session")
+		r.messenger.Notice(sessionID, fmt.Sprintf("⚠ Tokens altos: %d/%d — considera /compact o sesión nueva para ahorrar coste", budgetTokens, usable))
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, llmTimeout)
@@ -407,6 +445,9 @@ func (r *Runner) callLLM(ctx context.Context, sessionID string, model domain.Mod
 			response.usage = typedEvent.Usage
 			mutex.Unlock()
 		case ports.DoneEvent:
+			mutex.Lock()
+			response.reason = typedEvent.Reason
+			mutex.Unlock()
 			r.logger.Info("llm.response", "session", sessionID, "reason", typedEvent.Reason)
 		case ports.ErrorEvent:
 			r.logger.Error("llm.stream_error", "session", sessionID, "err", typedEvent.Err)
@@ -420,17 +461,71 @@ func (r *Runner) callLLM(ctx context.Context, sessionID string, model domain.Mod
 	response.text = builder.String()
 	mutex.Unlock()
 
-	// Retry imperceptible para modelos pequeños: solo para providers locales (llama.cpp, ollama, etc.).
-	// OpenAI/Anthropic oficiales tienen rate limits y coste; retry duplicaría coste y latencia.
-	isLocalProvider := model.Provider != "openai" && model.Provider != "anthropic"
-	if modelTier == domain.TierLight && !response.hasToolCalls && len(tools) > 0 && isLocalProvider {
+	// Continuación automática si el modelo se quedó sin max_tokens a mitad de un
+	// tool call / patch. Sin esto, un patch grande se trunca y el turno se pierde.
+	if response.reason == domain.FinishReasonMaxTokens && !response.hasToolCalls {
+		r.logger.Info("llm.continue_on_length", "session", sessionID, "model", model.ID)
+		contMsgs := append(append([]domain.Message{}, messagesWithExamples...),
+			domain.NewTextMessage(domain.RoleAssistant, response.text),
+			domain.NewTextMessage(domain.RoleUser, "Continúa exactamente donde te quedaste. Completa el tool call pendiente sin repetir lo ya dicho."),
+		)
+		contReq := ports.ChatRequest{
+			Model:           model,
+			Messages:        contMsgs,
+			Tools:           tools,
+			Temperature:     temp,
+			TopP:            topP,
+			TopK:            topK,
+			MaxTokens:       maxTokensForTier(modelTier, r.compaction.ModelMetadata[model.ID]),
+			ReasoningEffort: r.reasoningEffort,
+		}
+		var contBuilder strings.Builder
+		contResp := llmResponse{}
+		if cerr := r.provider.StreamChat(ctx, contReq, func(event ports.StreamEvent) error {
+			switch te := event.(type) {
+			case ports.TextDeltaEvent:
+				contBuilder.WriteString(te.Text)
+				r.messenger.StreamText(sessionID, te.Text)
+			case ports.ToolCallEvent:
+				contResp.toolCalls = append(contResp.toolCalls, te.Call)
+				contResp.toolCallCount++
+				contResp.hasToolCalls = true
+			case ports.UsageEvent:
+				contResp.usage = te.Usage
+			case ports.DoneEvent:
+				contResp.reason = te.Reason
+			}
+			return nil
+		}); cerr == nil && (contResp.hasToolCalls || strings.TrimSpace(contBuilder.String()) != "") {
+			if contResp.hasToolCalls {
+				response.toolCalls = append(response.toolCalls, contResp.toolCalls...)
+				response.toolCallCount += contResp.toolCallCount
+				response.hasToolCalls = true
+				response.reason = contResp.reason
+			}
+			response.text += contBuilder.String()
+			response.usage.OutputTokens += contResp.usage.OutputTokens
+			response.usage.InputTokens += contResp.usage.InputTokens
+		}
+	}
+
+	// Retry universal para respuestas evasivas o sin tool calls cuando se esperaban.
+	// Antes solo corría para providers locales y TierLight: los modelos grandes
+	// (30B/Opus vía API externa) también fallan turnos y no tenían 2ª oportunidad.
+	// Solo en iteración 0: una respuesta corta tras ejecutar herramientas es una
+	// respuesta final legítima ("listo"), no un fallo de tool-calling.
+	if !response.hasToolCalls && len(tools) > 0 && iteration == 0 {
 		if shouldRetrySmallModel(response.text) {
-			r.logger.Info("llm.retry_small_model", "session", sessionID, "model", model.ID, "reason", "no_tool_calls_or_evasive")
-			// Segundo intento con temp=0 determinista y prompt más explícito con feedback
-			retrySystem := "IMPORTANTE: Tu respuesta anterior no usó herramientas o fue evasiva. Debes usar herramientas cuando el usuario pida información sobre archivos, código o estado del proyecto. NO inventes respuestas. Output SOLO JSON válido para tool calls, sin texto adicional. Si no puedes responder, ejecuta la herramienta adecuada."
-			messagesWithRetry := append([]domain.Message{
-				domain.NewTextMessage(domain.RoleSystem, retrySystem),
-			}, messagesWithExamples...)
+			isLocal := model.Provider != "openai" && model.Provider != "anthropic"
+			// Locales: siempre reintentar. Remotos: reintentar solo si la respuesta
+			// es claramente evasiva/vacía (evita duplicar coste en respuestas finales legítimas).
+			evasive := isEvasiveResponse(response.text)
+			if isLocal || evasive || response.reason == domain.FinishReasonMaxTokens {
+				r.logger.Info("llm.retry_no_toolcalls", "session", sessionID, "model", model.ID, "local", isLocal)
+				retrySystem := "IMPORTANTE: Tu respuesta anterior no usó herramientas o fue evasiva. Debes usar herramientas cuando el usuario pida información sobre archivos, código o estado del proyecto. NO inventes respuestas. Si no puedes responder, ejecuta la herramienta adecuada."
+				messagesWithRetry := append([]domain.Message{
+					domain.NewTextMessage(domain.RoleSystem, retrySystem),
+				}, messagesWithExamples...)
 			
 			// Limpiar respuesta previa para re-stream
 			builder.Reset()
@@ -479,6 +574,7 @@ requestRetry := ports.ChatRequest{
 				response.text = builder.String()
 				mutex.Unlock()
 			}
+			}
 		}
 	}
 
@@ -487,6 +583,24 @@ requestRetry := ports.ChatRequest{
 	}
 	r.recordUsage(ctx, sessionID, model, phase, response.usage)
 	return response, nil
+}
+
+// isEvasiveResponse distingue una respuesta final legítima (texto largo y útil)
+// de una evasiva/vacía que merece retry incluso en providers remotos de pago.
+func isEvasiveResponse(text string) bool {
+	t := strings.ToLower(strings.TrimSpace(text))
+	if t == "" || len(t) < 50 {
+		return true
+	}
+	for _, pat := range []string{
+		"no puedo", "no tengo acceso", "no estoy seguro", "no sé",
+		"como modelo de lenguaje", "como ia", "no dispongo de", "no tengo información",
+	} {
+		if strings.Contains(t, pat) {
+			return true
+		}
+	}
+	return false
 }
 
 // recordUsage persiste el consumo de tokens si hay un recorder configurado.
@@ -585,8 +699,33 @@ func (r *Runner) executeTools(ctx context.Context, sessionID, workspace string, 
 		permResults[i] = permResult{idx: i, call: call, result: nil}
 	}
 
-	// Ejecutar en paralelo con límite 5
+	// Ejecutar: lecturas en paralelo (límite 5), escrituras en secuencia.
+	// Las escrituras al mismo archivo en paralelo causaban races read-after-edit.
 	toolMessages := make([]domain.Message, len(calls))
+	execOne := func(idx int, call domain.ToolCall) {
+		r.messenger.ToolStarted(sessionID, call)
+		result := r.tools.Execute(ctx, call)
+		result.ToolCallID = call.ID
+		// PostToolUse diagnostics (7.5.2) — feed LSP diagnostics after write/edit/patch
+		if (call.Name == "write" || call.Name == "edit" || call.Name == "apply_patch") && r.diagnostics != nil {
+			if p, ok := call.Arguments["path"].(string); ok && p != "" {
+				if diag := r.diagnostics(ctx, p); diag != "" && diag != "(sin diagnósticos)" {
+					result.Output += "\n[LSP diagnostics for " + p + "]\n" + diag
+					r.messenger.Notice(sessionID, "LSP diagnostics: "+diag)
+				}
+			} else if patch, ok := call.Arguments["patch"].(string); ok && r.diagnostics != nil {
+				// try to extract file from patch header
+				if extracted := extractPatchPath(patch); extracted != "" {
+					if diag := r.diagnostics(ctx, extracted); diag != "" && diag != "(sin diagnósticos)" {
+						result.Output += "\n[LSP diagnostics for " + extracted + "]\n" + diag
+					}
+				}
+			}
+		}
+		r.messenger.ToolFinished(sessionID, call, result)
+		r.logger.Info("tool.finished", "session", sessionID, "tool", call.Name, "ok", result.OK, "error", errorString(result.Error))
+		toolMessages[idx] = domain.NewToolResultMessage(call.ID, call.Name, result)
+	}
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 5)
 	for i, pr := range permResults {
@@ -598,44 +737,60 @@ func (r *Runner) executeTools(ctx context.Context, sessionID, workspace string, 
 			toolMessages[i] = domain.NewToolResultMessage(pr.call.ID, pr.call.Name, *pr.result)
 			continue
 		}
+		if isWriteTool(pr.call.Name) {
+			continue // fase secuencial abajo
+		}
 		wg.Add(1)
 		go func(idx int, call domain.ToolCall) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			r.messenger.ToolStarted(sessionID, call)
-			result := r.tools.Execute(ctx, call)
-			result.ToolCallID = call.ID
-			// PostToolUse diagnostics (7.5.2) — feed LSP diagnostics after write/edit/patch
-			if (call.Name == "write" || call.Name == "edit" || call.Name == "apply_patch") && r.diagnostics != nil {
-				if p, ok := call.Arguments["path"].(string); ok && p != "" {
-					if diag := r.diagnostics(ctx, p); diag != "" && diag != "(sin diagnósticos)" {
-						result.Output += "\n[LSP diagnostics for " + p + "]\n" + diag
-						r.messenger.Notice(sessionID, "LSP diagnostics: "+diag)
-					}
-				} else if patch, ok := call.Arguments["patch"].(string); ok && r.diagnostics != nil {
-					// try to extract file from patch header
-					if extracted := extractPatchPath(patch); extracted != "" {
-						if diag := r.diagnostics(ctx, extracted); diag != "" && diag != "(sin diagnósticos)" {
-							result.Output += "\n[LSP diagnostics for " + extracted + "]\n" + diag
-						}
-					}
-				}
-			}
-			r.messenger.ToolFinished(sessionID, call, result)
-			r.logger.Info("tool.finished", "session", sessionID, "tool", call.Name, "ok", result.OK, "error", errorString(result.Error))
-			toolMessages[idx] = domain.NewToolResultMessage(call.ID, call.Name, result)
+			execOne(idx, call)
 		}(i, pr.call)
 	}
 	wg.Wait()
+	// Fase secuencial de escrituras en orden de llamada (respeta dependencias).
+	for i, pr := range permResults {
+		if pr.result != nil || !isWriteTool(pr.call.Name) {
+			continue
+		}
+		execOne(i, pr.call)
+	}
 	return toolMessages, nil
 }
 
-// doom-loop: 3× mismo tool+args exactos
+// isWriteTool indica herramientas con efectos de escritura/ejecución.
+func isWriteTool(name string) bool {
+	switch name {
+	case "write", "edit", "apply_patch", "bash", "todo", "todowrite", "update_plan":
+		return true
+	default:
+		return false
+	}
+}
+
+// doom-loop: 3× mismo tool+args exactos + 3× mismo archivo + errores consecutivos.
 var doomHistory = struct {
 	sync.Mutex
-	recent []string
+	recent     []string
+	errStreak  int
+	lastErrKey string
 }{}
+
+func toolTargetPath(c domain.ToolCall) string {
+	for _, k := range []string{"path", "file", "patch"} {
+		if v, ok := c.Arguments[k].(string); ok && v != "" {
+			if k == "patch" {
+				if p := extractPatchPath(v); p != "" {
+					return p
+				}
+				continue
+			}
+			return v
+		}
+	}
+	return ""
+}
 
 func (r *Runner) detectDoomLoop(calls []domain.ToolCall) string {
 	key := func(c domain.ToolCall) string {
@@ -658,8 +813,145 @@ func (r *Runner) detectDoomLoop(calls []domain.ToolCall) string {
 		if count >= 3 {
 			return fmt.Sprintf("⚠ Doom-loop detectado: '%s' repetido %dx — prueba alternativa (glob vs grep, read_many_files, o cambia args).", c.Name, count)
 		}
+		// Detección semántica: mismo tool + mismo archivo 3x aunque cambien otros args.
+		if target := toolTargetPath(c); target != "" {
+			semKey := c.Name + "@" + target
+			semCount := 0
+			for _, rk := range doomHistory.recent {
+				// rk es name:args; aproximamos buscando el target dentro.
+				if strings.Contains(rk, target) && strings.HasPrefix(rk, c.Name+":") {
+					semCount++
+				}
+			}
+			_ = semKey
+			if semCount >= 3 {
+				return fmt.Sprintf("⚠ Loop semántico: '%s' sobre '%s' %dx seguidas con el mismo resultado — re-lee el archivo con `read`, revisa `git_diff` y cambia de estrategia antes de reintentar.", c.Name, target, semCount)
+			}
+		}
 	}
 	return ""
+}
+
+// planMutatingTools son las herramientas que el gate plan→build bloquea
+// cuando hay un plan pendiente de aprobación.
+var planMutatingTools = map[string]bool{
+	"write": true, "edit": true, "apply_patch": true, "bash": true, "lsp_rename": true,
+}
+
+// applyPlanGate deniega mutaciones en build si la sesión tiene plan pendiente.
+// Devuelve nil si no aplica (sin plan, ya aprobado, o agente read-only).
+func (r *Runner) applyPlanGate(sess domain.Session, agent domain.Agent, calls []domain.ToolCall) []domain.Message {
+	if agent.IsReadOnly || sess.PlanStatus != "pending" {
+		return nil
+	}
+	denied := false
+	for _, c := range calls {
+		if planMutatingTools[c.Name] {
+			denied = true
+			break
+		}
+	}
+	if !denied {
+		return nil
+	}
+	r.messenger.Notice(sess.ID, "Plan pendiente de aprobación — mutaciones bloqueadas hasta aprobar (exit_plan_mode o /approve).")
+	r.logger.Warn("plan.gate_deny", "session", sess.ID)
+	out := make([]domain.Message, 0, len(calls))
+	for _, c := range calls {
+		text := ""
+		if planMutatingTools[c.Name] {
+			text = "PLAN GATE: hay un plan pendiente de aprobación en esta sesión. No ejecuto mutaciones hasta que apruebes: vuelve a plan y usa exit_plan_mode, o ejecuta /approve en la TUI."
+		} else {
+			text = "PLAN GATE: herramienta de lectura permitida (el gate solo bloquea mutaciones)."
+		}
+		out = append(out, domain.NewToolResultMessage(c.ID, c.Name,
+			domain.ToolResult{ToolCallID: c.ID, OK: !planMutatingTools[c.Name], Output: text}))
+	}
+	return out
+}
+
+// updatePlanStatus mantiene el gate: artefacto de plan escrito → pending
+// (re-planear revoca la aprobación); exit_plan_mode OK → approved.
+func (r *Runner) updatePlanStatus(sess *domain.Session, agent domain.Agent, calls []domain.ToolCall, results []domain.Message) {
+	if !agent.IsReadOnly {
+		return
+	}
+	changed := false
+	for i, c := range calls {
+		var ok bool
+		if i < len(results) {
+			ok = !strings.HasPrefix(results[i].Text(), "ERROR:")
+		}
+		if !ok {
+			continue
+		}
+		if c.Name == "write" {
+			if p, _ := c.Arguments["path"].(string); p != "" && isPlanArtifactPath(p) {
+				if sess.PlanStatus != "pending" {
+					sess.PlanStatus = "pending"
+					changed = true
+				}
+			}
+		}
+		if c.Name == "exit_plan_mode" {
+			sess.PlanStatus = "approved"
+			if plan, _ := c.Arguments["plan"].(string); plan != "" {
+				if len(plan) > 2000 {
+					plan = plan[:2000] + "…"
+				}
+				sess.PlanSummary = plan
+			}
+			changed = true
+		}
+	}
+	if changed {
+		r.logger.Info("plan.status", "session", sess.ID, "status", sess.PlanStatus)
+	}
+}
+
+// consecutiveToolErrors cuenta errores al final del batch y actualiza el streak global.
+func consecutiveToolErrors(msgs []domain.Message) int {
+	if len(msgs) == 0 {
+		recordToolErrorOutcome(true, "")
+		return 0
+	}
+	// Si el último mensaje es OK, se resetea el streak.
+	last := msgs[len(msgs)-1].Text()
+	lastLower := strings.ToLower(last)
+	failed := strings.Contains(lastLower, "error") || strings.Contains(lastLower, "deneg") ||
+		strings.Contains(lastLower, "not found") || strings.Contains(lastLower, "no existe") ||
+		strings.Contains(lastLower, "is a directory") || strings.Contains(lastLower, "permiso denegado")
+	if !failed {
+		recordToolErrorOutcome(true, "")
+		return 0
+	}
+	return recordToolErrorOutcome(false, lastLower[:minInt(len(lastLower), 120)])
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// recordToolErrorOutcome alimenta el contador de errores consecutivos para
+// escalado mid-loop (tras 3 fallos seguidos se inyecta guía correctiva).
+func recordToolErrorOutcome(ok bool, errKey string) int {
+	doomHistory.Lock()
+	defer doomHistory.Unlock()
+	if ok {
+		doomHistory.errStreak = 0
+		doomHistory.lastErrKey = ""
+		return 0
+	}
+	if errKey != "" && errKey == doomHistory.lastErrKey {
+		doomHistory.errStreak++
+	} else {
+		doomHistory.errStreak = 1
+		doomHistory.lastErrKey = errKey
+	}
+	return doomHistory.errStreak
 }
 
 //nolint:unused // retained for direct-call tests and single-tool path
@@ -785,7 +1077,16 @@ func (r *Runner) projectMessage(m domain.Message) domain.Message {
 
 // maybeCompact aplica 2-step compaction: prune (cero LLM) → LLM summary si aún overflow.
 // focus permite /compact con instrucciones (Claude Compact Instructions).
+// Wrapper legacy sin contexto real (system+tools no medidos); preferir maybeCompactWithContext.
 func (r *Runner) maybeCompact(ctx context.Context, sess *domain.Session, focus string) error {
+	return r.maybeCompactWithContext(ctx, sess, focus, "", nil)
+}
+
+// maybeCompactWithContext es la compactación automática con medición real:
+// systemPrompt + tools incluidos en el cálculo (antes solo mensajes → compactaba
+// tarde y el provider truncaba por detrás, causando alucinaciones).
+// Niveles: 70% aviso · 85% prune auto · 95% prune+summary forzado (ignora thrashing).
+func (r *Runner) maybeCompactWithContext(ctx context.Context, sess *domain.Session, focus string, systemPrompt string, tools []domain.Tool) error {
 	if r.compaction.Disabled {
 		return nil
 	}
@@ -797,16 +1098,30 @@ func (r *Runner) maybeCompact(ctx context.Context, sess *domain.Session, focus s
 	if v := strings.TrimSpace(strings.ToLower(strings.TrimSpace(envOr("", "FORGEN_DISABLE_AUTOCOMPACT")))); v == "1" || v == "true" {
 		return nil
 	}
-	if sess.CompactionCount >= 3 {
-		// Anti-thrashing: 3 compactions seguidas sin bajar suficiente → pausar.
-		// Solo permitir manual con focus.
+	md := r.compaction.ModelMetadata
+	ratio := session.UsageRatio(*sess, systemPrompt, tools, sess.Model, md)
+	forced := focus != ""
+	// Nivel 95%: forzar aunque haya thrashing (nunca dejar sin red).
+	if !forced && ratio >= session.ForceThreshold {
+		forced = true
+		r.logger.Warn("compaction.force_95", "session", sess.ID, "ratio", ratio)
+	}
+	if !forced && sess.CompactionCount >= 3 {
+		// Anti-thrashing: 3 compactions seguidas sin bajar suficiente → pausar nivel 85.
+		// Solo permitir manual con focus o nivel 95% forzado.
 		if focus == "" {
-			r.logger.Warn("compaction thrashing guard", "session", sess.ID, "count", sess.CompactionCount)
+			r.logger.Warn("compaction thrashing guard", "session", sess.ID, "count", sess.CompactionCount, "ratio", ratio)
 			return nil
 		}
 	}
-	needsOverflow := isOverflowLocal(*sess, sess.Model, r.compaction.ModelMetadata, threshold)
-	if !needsOverflow && focus == "" {
+	// Nivel 70%: aviso sin actuar.
+	if !forced && ratio >= session.WarnThreshold && !session.IsOverflowTotal(*sess, systemPrompt, tools, sess.Model, md, threshold) {
+		r.messenger.Notice(sess.ID, fmt.Sprintf("Contexto al %d%% del usable — considera /compact o sesión nueva para evitar alucinaciones.", int(ratio*100)))
+		r.logger.Info("compaction.warn_70", "session", sess.ID, "ratio", ratio)
+		return nil
+	}
+	needsOverflow := session.IsOverflowTotal(*sess, systemPrompt, tools, sess.Model, md, threshold)
+	if !needsOverflow && !forced {
 		return nil
 	}
 	// Step 1: prune no-destructivo (siempre, barato).
@@ -818,21 +1133,30 @@ func (r *Runner) maybeCompact(ctx context.Context, sess *domain.Session, focus s
 		}
 		r.messenger.Notice(sess.ID, "Pruned old tool results to free context (no LLM cost)")
 		// Re-evaluar overflow tras prune.
-		if !isOverflowLocal(*sess, sess.Model, r.compaction.ModelMetadata, threshold) && focus == "" {
+		if !session.IsOverflowTotal(*sess, systemPrompt, tools, sess.Model, md, threshold) && !forced {
+			r.decayCompactionCount(sess, systemPrompt, tools)
 			return nil
 		}
 	}
-	// Step 2: LLM summary (5 headings) — requiere provider.
+	// Step 2: LLM summary estructurado — requiere provider.
 	if r.provider == nil {
 		return nil
 	}
-	// Si thrashing, solo prune ya hecho, no LLM.
-	if sess.CompactionCount >= 3 && focus == "" {
+	// Si thrashing y no forzado, solo prune ya hecho, no LLM.
+	if sess.CompactionCount >= 3 && !forced {
 		return nil
 	}
 	summary, err := summarizeLocal(ctx, r.provider, sess.Model, *sess, focus)
 	if err != nil {
 		return err
+	}
+	// Validación post-hoc: el summary debe preservar lo crítico (≥3 secciones).
+	// Si viene malformado, 1 retry determinista antes de aceptar (autónomo, sin pausar).
+	if !session.ValidCompactionSummary(summary) {
+		r.logger.Warn("compaction.summary_invalid_retry", "session", sess.ID, "chars", len(summary))
+		if retry, rerr := summarizeLocal(ctx, r.provider, sess.Model, *sess, focus); rerr == nil && session.ValidCompactionSummary(retry) {
+			summary = retry
+		}
 	}
 	*sess = applyCompactionLocal(*sess, summary)
 	if err := r.sessions.Save(ctx, *sess); err != nil {
@@ -851,9 +1175,24 @@ func (r *Runner) maybeCompact(ctx context.Context, sess *domain.Session, focus s
 	}
 	// Guardar también memoria en .forgen/plans para trazabilidad
 	_ = os.MkdirAll(filepath.Join(".forgen", "plans"), 0755)
-	r.messenger.Notice(sess.ID, "Compacted session history — summary injected, tail preserved")
+	r.messenger.Notice(sess.ID, fmt.Sprintf("Compacted session history — summary injected, tail preserved (%d msgs)", len(sess.Messages)-sess.CompactBoundary))
 	r.logger.Info("compaction.summary", "session", sess.ID, "boundary", sess.CompactBoundary, "chars", len(summary))
+	// Decaimiento: si bajamos de 70% tras compactar, reset del contador.
+	r.decayCompactionCount(sess, systemPrompt, tools)
 	return nil
+}
+
+// decayCompactionCount resetea el contador anti-thrashing cuando los tokens
+// bajan de 70%: evita que el auto quede bloqueado para siempre en sesiones largas.
+func (r *Runner) decayCompactionCount(sess *domain.Session, systemPrompt string, tools []domain.Tool) {
+	if sess.CompactionCount == 0 {
+		return
+	}
+	if session.UsageRatio(*sess, systemPrompt, tools, sess.Model, r.compaction.ModelMetadata) < session.WarnThreshold {
+		sess.CompactionCount = 0
+		_ = r.sessions.Save(context.Background(), *sess)
+		r.logger.Info("compaction.count_reset", "session", sess.ID)
+	}
 }
 
 // CompactNow expone compactación manual para CLI /compact.

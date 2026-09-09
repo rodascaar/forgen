@@ -68,6 +68,8 @@ type App struct {
 	LSP             *lsp.Manager
 	Logger          *slog.Logger
 	ActiveFermentID string
+	// SandboxPolicy es la política efectiva de ejecución (para anunciarla al modelo).
+	SandboxPolicy domain.SandboxPolicy
 }
 
 // NewApp construye la aplicación con todos los adapters inyectados.
@@ -150,7 +152,7 @@ func NewApp(logger *slog.Logger) (*App, error) {
 	}
 
 	fileSystem := fs.New(workspace)
-	executor := buildExecutor(workspace, appConfig, paths, logger)
+	executor, sandboxPolicy := buildExecutor(workspace, appConfig, paths, logger)
 	gitCLI := gitadapter.NewCombined(gitadapter.New(), filepath.Join(paths.DataDir, "workspaces"))
 
 	// LSP: detectar lenguaje y arrancar el language server (si está instalado).
@@ -285,6 +287,7 @@ func NewApp(logger *slog.Logger) (*App, error) {
 		MCP:            mcpManager,
 		LSP:            lspManager,
 		Logger:         logger,
+		SandboxPolicy:  sandboxPolicy,
 	}, nil
 }
 
@@ -419,6 +422,11 @@ func (a *App) NewRunner(ctx context.Context, deps RunnerDeps) (*agent.Runner, er
 		sys := resolvedAgent.SystemPrompt
 		if modelFamilyHint != "" {
 			sys += "\n\n" + modelFamilyHint
+		}
+		// Anunciar la política sandbox al modelo (patrón Codex: la conoce antes
+		// de intentarlo, en vez de descubrirla por errores).
+		if sb := a.SandboxPolicy.PromptBlock(); sb != "" {
+			blocks = append(blocks, agent.ContextBlock{Title: "sandbox", Content: sb})
 		}
 		return agent.ComposeSystemPrompt(sys, blocks, toolchain), nil
 	}
@@ -756,7 +764,8 @@ func isLegacyEnglishPrompt(p string) bool {
 
 func loadMemoryBlock(workspace string) string {
 	m := memory.New(workspace)
-	if b := m.LoadWorkspace(context.Background()); b != "" {
+	// Budget 2k chars: la memoria completa (20k) ahogaba el contexto cada turno.
+	if b := m.LoadWorkspaceBudgeted(context.Background(), 2000); b != "" {
 		return b
 	}
 	return ""
@@ -966,21 +975,38 @@ func (a *autoDenyResponder) Remember(_ context.Context, _ string, _ domain.ToolC
 	return nil
 }
 
-// buildExecutor construye la cadena de ejecución: local o docker, con hooks.
-func buildExecutor(workspace string, config domain.AppConfig, paths Paths, logger *slog.Logger) ports.Executor {
+// buildExecutor construye la cadena de ejecución: native (sandbox SO) por
+// defecto, docker legacy opt-in, local con off. Siempre con hooks.
+// Devuelve también la política efectiva para anunciarla al modelo.
+func buildExecutor(workspace string, config domain.AppConfig, paths Paths, logger *slog.Logger) (ports.Executor, domain.SandboxPolicy) {
 	var base ports.Executor = exec.New(workspace)
+	policy := domain.DefaultSandboxPolicy(workspace)
 
-	if config.Execution.Sandbox == "docker" {
+	switch config.Execution.SandboxBackendName() {
+	case "docker":
 		image := config.Execution.DockerImage
 		if image == "" {
 			image = "forgen-sandbox"
 		}
 		base = sandbox.NewDockerExecutor(image, workspace)
+		policy.Backend = "docker"
+		policy.Enforced = true
+	case "off":
+		// Local sin confinar (documentado como inseguro para auto-mode).
+		logger.Warn("sandbox.disabled", "hint", "execution.sandbox=off: bash corre sin jaula del SO")
+	default: // native
+		native := sandbox.NewNativeExecutor(workspace,
+			domain.ParseSandboxMode(config.Execution.Mode),
+			config.Execution.Network,
+			config.Execution.ExtraWritable,
+			base, logger)
+		policy = native.Policy()
+		base = native
 	}
 
 	hookDirs := []string{
 		filepath.Join(paths.ConfigDir, "hooks", "bash"),
 		".forgen/hooks/bash",
 	}
-	return hook.NewExecutor(base, hookDirs, logger)
+	return hook.NewExecutor(base, hookDirs, logger), policy
 }

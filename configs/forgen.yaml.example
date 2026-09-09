@@ -98,7 +98,13 @@ theme:
   accent: "#bb9af7"
   dim: "#565f89"
 
-# Ejecución de comandos (opcional: docker para sandbox).
+# Ejecución de comandos: sandbox a nivel de SO (sin Docker ni descargas).
+# sandbox: native (default, seatbelt en macOS / bwrap en Linux) | docker | off
+# mode: workspace-write (default) | read-only | danger-full-access
+# network: false (default, binario on/off; proxy con dominios en v2)
 execution:
-  sandbox: ""           # "" | docker
+  sandbox: "native"
+  mode: "workspace-write"
+  network: false
+  # extra_writable: ["/caché/toolchain"]  # raíces extra escribibles
   docker_image: "forgen-sandbox"

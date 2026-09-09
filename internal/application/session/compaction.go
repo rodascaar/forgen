@@ -29,6 +29,10 @@ const (
 	CompactionThrashingLimit = 3
 	// DefaultCompactionThreshold umbral default (85%).
 	DefaultCompactionThreshold = 0.85
+	// WarnThreshold avisa sin actuar (70% del usable).
+	WarnThreshold = 0.70
+	// ForceThreshold compacta aunque haya thrashing (95% del usable).
+	ForceThreshold = 0.95
 )
 
 // EstimateTokens estima tokens ~ chars/4 (heurística barata, agnóstica).
@@ -81,8 +85,76 @@ func ReservedFor(model domain.Model, metadata map[string]domain.ModelMetadata) i
 	return DefaultReservedTokens
 }
 
+// ToolsOverhead estima los tokens que los schemas de tools consumen cada llamada.
+// Antes no se medían: ~15-20 tools viajan en cada request y el guard subestimaba.
+func ToolsOverhead(tools []domain.Tool) int {
+	total := 0
+	for _, t := range tools {
+		total += EstimateTokens(t.Name)
+		total += EstimateTokens(t.Description)
+		if t.Schema != nil {
+			total += EstimateTokens(fmt.Sprintf("%v", t.Schema))
+		}
+	}
+	return total
+}
+
+// TotalTokens mide el coste real de un request: system prompt + mensajes + tools.
+// SessionTokens solo sumaba mensajes e ignoraba ~8-12k tokens de system+tools,
+// por eso se compactaba tarde y el provider truncaba (alucinaciones).
+func TotalTokens(sess domain.Session, systemPrompt string, tools []domain.Tool) int {
+	return SessionTokens(sess) + EstimateTokens(systemPrompt) + ToolsOverhead(tools)
+}
+
+// UsableBudget devuelve (usable, budget) para un modelo y umbral.
+func UsableBudget(model domain.Model, metadata map[string]domain.ModelMetadata, threshold float64) (usable, budget int) {
+	if threshold == 0 {
+		threshold = DefaultCompactionThreshold
+	}
+	limit := ContextLimitFor(model, metadata)
+	reserved := ReservedFor(model, metadata)
+	usable = limit - reserved
+	if usable <= 0 {
+		usable = limit
+	}
+	budget = int(float64(usable) * threshold)
+	return usable, budget
+}
+
+// UsageRatio devuelve total/usable (1.0 = lleno). Sirve para niveles 70/85/95.
+func UsageRatio(sess domain.Session, systemPrompt string, tools []domain.Tool, model domain.Model, metadata map[string]domain.ModelMetadata) float64 {
+	usable, _ := UsableBudget(model, metadata, 1.0)
+	if usable <= 0 {
+		return 0
+	}
+	return float64(TotalTokens(sess, systemPrompt, tools)) / float64(usable)
+}
+
+// IsOverflowTotal decide con medición real (system+tools incluidos).
+func IsOverflowTotal(sess domain.Session, systemPrompt string, tools []domain.Tool, model domain.Model, metadata map[string]domain.ModelMetadata, threshold float64) bool {
+	_, budget := UsableBudget(model, metadata, threshold)
+	return TotalTokens(sess, systemPrompt, tools) >= budget
+}
+
+// ValidCompactionSummary verifica que el resumen preserva lo crítico.
+// Exige ≥3 de las 7 secciones estructuradas; si falla, el caller reintenta una vez.
+func ValidCompactionSummary(summary string) bool {
+	if strings.TrimSpace(summary) == "" || len(summary) < 200 {
+		return false
+	}
+	lower := strings.ToLower(summary)
+	hits := 0
+	for _, h := range []string{"## objetivo", "## goal", "## hecho", "## done", "## en curso", "## in progress", "## archivos", "## files", "## plan", "## pendiente", "## next", "## restric", "## constrain"} {
+		if strings.Contains(lower, h) {
+			hits++
+		}
+	}
+	return hits >= 3
+}
+
 // IsOverflow decide si la sesión necesita compactación (Opencode isOverflow pattern).
 // threshold 0.85 significa: tokens > (limit - reserved) * 0.85
+// NOTA: medición solo de mensajes (legacy). Para medición real usar IsOverflowTotal.
 func IsOverflow(session domain.Session, model domain.Model, metadata map[string]domain.ModelMetadata, threshold float64) bool {
 	if threshold == 0 {
 		threshold = DefaultCompactionThreshold
@@ -237,29 +309,65 @@ func DetectLanguage(session domain.Session) string {
 }
 
 // CompactionPrompts prompts bilingües 5 headings (Opencode base).
+// Formato estructurado obligatorio: preserva plan/todos, diffs y próximos pasos
+// para que el modelo grande no "olvide" el estado tras compactar.
 var CompactionPromptES = `Eres un asistente que resume conversaciones para continuar la sesión.
 
-Genera un resumen detallado pero conciso. Esta será la ÚNICA memoria disponible al continuar, así que preserva información crítica:
+Genera un resumen detallado pero conciso. Esta será la ÚNICA memoria disponible al continuar, así que preserva información crítica.
 
-- Qué se hizo (tareas completadas, decisiones)
-- En qué se está trabajando ahora
-- Qué archivos se modificaron y su estado
-- Qué falta por hacer (próximos pasos claros)
-- Peticiones/restricciones clave del usuario y decisiones técnicas con su porqué
+Responde EXACTAMENTE con estas secciones (omite solo las vacías):
 
-Sé conciso pero suficiente para continuar sin perder contexto. Si hay instrucciones de enfoque, prioriza ese foco.`
+## Objetivo
+Una línea: qué se quiere lograr.
+
+## Hecho
+Tareas completadas, decisiones tomadas y porqué.
+
+## En curso
+En qué se está trabajando ahora mismo.
+
+## Archivos
+Lista de archivos modificados/creados + estado (pendiente de test, verificado, con errores + mensaje de error literal).
+
+## Plan / TODOs
+Estado actual de todowrite/update_plan: qué pasos están done/in_progress/pending.
+
+## Pendiente
+Próximos pasos claros y ordenados.
+
+## Restricciones
+Peticiones del usuario, constraints del repo (AGENTS.md), decisiones técnicas con su porqué.
+
+Sé conciso pero suficiente para continuar sin perder contexto ni duplicar trabajo. Si hay instrucciones de enfoque, prioriza ese foco.`
 
 var CompactionPromptEN = `You are an assistant that summarizes conversations to continue the session.
 
-Generate a detailed but concise summary. This will be the ONLY memory when continuing, so preserve critical information:
+Generate a detailed but concise summary. This will be the ONLY memory when continuing, so preserve critical information.
 
-- What was done (completed tasks, decisions)
-- What is currently being worked on
-- Which files were modified and their status
-- What remains to be done (clear next steps)
-- Key user requests/constraints and technical decisions with rationale
+Reply with EXACTLY these sections (skip only empty ones):
 
-Be concise but sufficient to continue without losing context. If focus instructions are provided, prioritize that focus.`
+## Goal
+One line: what is being achieved.
+
+## Done
+Completed tasks, decisions made and why.
+
+## In progress
+What is being worked on right now.
+
+## Files
+Modified/created files + status (pending test, verified, failing + literal error).
+
+## Plan / TODOs
+Current todowrite/update_plan state: done/in_progress/pending steps.
+
+## Next
+Clear ordered next steps.
+
+## Constraints
+User requests, repo constraints (AGENTS.md), technical decisions with rationale.
+
+Be concise but sufficient to continue without losing context or duplicating work. If focus instructions are provided, prioritize that focus.`
 
 func CompactionPromptFor(lang string) string {
 	if lang == "es" {
@@ -316,7 +424,7 @@ func (c *CompactionService) Summarize(ctx context.Context, session domain.Sessio
 		Model:       c.model,
 		Messages:    llmMsgs,
 		Temperature: 0.2,
-		MaxTokens:   2048,
+		MaxTokens:   3072,
 	}
 	err := c.provider.StreamChat(ctx, req, func(ev ports.StreamEvent) error {
 		if d, ok := ev.(ports.TextDeltaEvent); ok {
@@ -338,8 +446,8 @@ func (c *CompactionService) Summarize(ctx context.Context, session domain.Sessio
 // Si prune solo es suficiente (baja tokens < threshold) puede no requerir LLM — caller decide.
 func ApplyCompaction(session domain.Session, summary string) domain.Session {
 	// Boundary = índice desde donde se conserva tail (después de pruning, tail = protegidos + recientes).
-	// Heurística: conservar últimos 20 mensajes como tail (coherente con PruneProtectTokens).
-	tail := min(len(session.Messages), 20)
+	// 30 mensajes: preserva plan/todos + diffs recientes (antes 20, perdía estado).
+	tail := min(len(session.Messages), 30)
 	session.CompactBoundary = max(len(session.Messages)-tail, 0)
 	session.CompactionSummary = strings.TrimSpace(summary)
 	session.CompactionCount++

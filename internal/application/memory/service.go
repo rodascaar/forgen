@@ -18,11 +18,21 @@ func New(workspace string) *Service { return &Service{workspace: workspace} }
 func (s *Service) WorkspacePath() string { return filepath.Join(s.workspace, ".forgen", "memory.md") }
 
 func (s *Service) LoadWorkspace(ctx context.Context) string {
+	return s.LoadWorkspaceBudgeted(ctx, 20000)
+}
+
+// LoadWorkspaceBudgeted devuelve la memoria recortada a maxChars (tail).
+// Evita inyectar 20k íntegros cada turno: por defecto el caller pide 2k.
+func (s *Service) LoadWorkspaceBudgeted(ctx context.Context, maxChars int) string {
 	data, err := os.ReadFile(s.WorkspacePath())
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(data))
+	out := strings.TrimSpace(string(data))
+	if maxChars > 0 && len(out) > maxChars {
+		out = strings.TrimSpace(out[len(out)-maxChars:])
+	}
+	return out
 }
 
 // AppendCompaction añade resumen de compaction a memoria workspace (ciclo compress→distill simple).

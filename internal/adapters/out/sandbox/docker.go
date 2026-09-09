@@ -2,7 +2,6 @@
 package sandbox
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"os/exec"
@@ -10,26 +9,7 @@ import (
 	"github.com/rodascaar/forgen/internal/core/ports"
 )
 
-// maxOutputBytes es el límite por stdout/stderr (512 KiB) para evitar OOM.
-const maxOutputBytes = 512 * 1024
-
-// limitedBuffer captura la salida con un límite duro.
-type limitedBuffer struct {
-	buffer bytes.Buffer
-}
-
-func (b *limitedBuffer) Write(data []byte) (int, error) {
-	remaining := maxOutputBytes - b.buffer.Len()
-	if remaining <= 0 {
-		return len(data), nil
-	}
-	if len(data) > remaining {
-		data = data[:remaining]
-	}
-	return b.buffer.Write(data)
-}
-
-func (b *limitedBuffer) String() string { return b.buffer.String() }
+// maxOutputBytes y limitedBuffer viven en native.go (compartidos por backends).
 
 // DockerExecutor ejecuta comandos dentro de un contenedor Docker.
 type DockerExecutor struct {

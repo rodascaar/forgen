@@ -91,8 +91,65 @@ func TestVisibleMessagesPlaceholder(t *testing.T) {
 	}
 }
 
+func TestIsOverflowTotalCountsSystemAndTools(t *testing.T) {
+	m := domain.Model{Provider: "openai", ID: "gpt-5"}
+	s := domain.Session{Messages: []domain.Message{
+		domain.NewTextMessage(domain.RoleUser, "hi"),
+	}}
+	// Sin system/tools no hay overflow (legacy tampoco).
+	if IsOverflowTotal(s, "", nil, m, nil, 0.85) {
+		t.Fatalf("did not expect overflow for tiny session")
+	}
+	// System prompt gigante (~100k chars ≈ 25k tokens) + tools deben contar.
+	// Con límite default 128k - 4k reserved = 124k usable, 85% ≈ 105k: 25k no basta,
+	// pero con metadata de 32k (usable 28k, 85% ≈ 23.8k) sí debe dar overflow.
+	md := map[string]domain.ModelMetadata{
+		m.Key(): {ContextLimit: 32000, MaxOutput: 4000},
+	}
+	bigSystem := strings.Repeat("s", 100000)
+	if !IsOverflowTotal(s, bigSystem, nil, m, md, 0.85) {
+		t.Fatalf("expected overflow with big system prompt, total=%d", TotalTokens(s, bigSystem, nil))
+	}
+	// Y el legacy IsOverflow (solo mensajes) NO lo detecta: ese era el bug.
+	if IsOverflow(s, m, md, 0.85) {
+		t.Fatalf("legacy IsOverflow should not fire on system-only bloat")
+	}
+}
+
+func TestUsageRatioLevels(t *testing.T) {
+	m := domain.Model{Provider: "openai", ID: "gpt-5"}
+	md := map[string]domain.ModelMetadata{
+		m.Key(): {ContextLimit: 10000, MaxOutput: 1000}, // usable 9000
+	}
+	s := domain.Session{}
+	if r := UsageRatio(s, "", nil, m, md); r != 0 {
+		t.Fatalf("expected 0 ratio got %f", r)
+	}
+	// ~6500 tokens ≈ 72%: nivel aviso.
+	s70 := domain.Session{Messages: []domain.Message{
+		domain.NewTextMessage(domain.RoleUser, strings.Repeat("a", 26000)),
+	}}
+	r70 := UsageRatio(s70, "", nil, m, md)
+	if r70 < WarnThreshold || r70 >= DefaultCompactionThreshold {
+		t.Fatalf("expected warn-level ratio in [0.70,0.85) got %f", r70)
+	}
+}
+
+func TestValidCompactionSummary(t *testing.T) {
+	good := "## Objetivo\nx\n## Hecho\ny\n## Archivos\nz\n## Pendiente\nw\n" + strings.Repeat("texto ", 50)
+	if !ValidCompactionSummary(good) {
+		t.Fatalf("expected valid summary")
+	}
+	if ValidCompactionSummary("") {
+		t.Fatalf("empty should be invalid")
+	}
+	if ValidCompactionSummary("resumen corto sin secciones") {
+		t.Fatalf("short unstructured should be invalid")
+	}
+}
+
 func TestApplyCompactionBoundary(t *testing.T) {
-	s := domain.Session{Messages: make([]domain.Message, 25)}
+	s := domain.Session{Messages: make([]domain.Message, 35)}
 	for i := range s.Messages {
 		s.Messages[i] = domain.NewTextMessage(domain.RoleUser, "msg")
 	}
@@ -104,8 +161,8 @@ func TestApplyCompactionBoundary(t *testing.T) {
 		t.Fatalf("summary mismatch")
 	}
 	vis := VisibleMessages(s2)
-	if len(vis) != 21 { // 1 summary + 20 tail
-		t.Fatalf("expected 21 visible got %d", len(vis))
+	if len(vis) != 31 { // 1 summary + 30 tail
+		t.Fatalf("expected 31 visible got %d", len(vis))
 	}
 }
 

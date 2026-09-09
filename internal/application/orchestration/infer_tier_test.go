@@ -20,7 +20,7 @@ func TestInferTier(t *testing.T) {
 		{"phi-3.5-mini-4b", domain.TierLight},
 		{"llama-3.2-3b", domain.TierLight},
 		{"custom-12b", domain.TierStandard},
-		{"model-30b", domain.TierStandard},
+		{"model-30b", domain.TierHeavy},
 		{"model-70b", domain.TierHeavy},
 		{"model-120b", domain.TierHeavy},
 		{"model-405b", domain.TierHeavy},
@@ -32,7 +32,7 @@ func TestInferTier(t *testing.T) {
 		{"nvidia/llama-3.1-nemotron-ultra-253b-v1", domain.TierHeavy},
 		{"deepseek-r1", domain.TierHeavy},
 		{"qwen-max", domain.TierHeavy},
-		{"claude-sonnet-4-5", domain.TierStandard},
+		{"claude-sonnet-4-5", domain.TierHeavy},
 		{"gpt-5", domain.TierStandard},
 
 		// Edge cases

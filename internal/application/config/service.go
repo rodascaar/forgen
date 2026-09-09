@@ -100,7 +100,8 @@ func (s *Service) mergeFile(base, file domain.AppConfig) domain.AppConfig {
 	if file.Theme != (domain.Theme{}) {
 		base.Theme = file.Theme
 	}
-	if file.Execution != (domain.ExecutionConfig{}) {
+	if file.Execution.Sandbox != "" || file.Execution.Mode != "" || file.Execution.DockerImage != "" ||
+		file.Execution.Network || len(file.Execution.ExtraWritable) > 0 {
 		base.Execution = file.Execution
 	}
 	if file.Language != "" {

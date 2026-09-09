@@ -140,7 +140,7 @@ func (a *Anthropic) StreamChat(ctx context.Context, request ports.ChatRequest, h
 	}
 	defer func() { _ = response.Body.Close() }()
 
-	accumulator := newAnthropicAccumulator(handler, slog.Default())
+	accumulator := newAnthropicAccumulator(handler, slog.Default()).withTools(request.Tools)
 	if err := a.client.StreamSSE(response.Body, func(data string) error {
 		var event anthropicSSEEvent
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
@@ -271,10 +271,12 @@ func buildAnthropicMessages(messages []domain.Message) (string, []anthropicMessa
 // anthropicAccumulator ensambla texto y tool_use desde los eventos SSE.
 type anthropicAccumulator struct {
 	handler      ports.StreamHandler
+	tools        []domain.Tool
 	pending      map[int]*pendingCall
 	order        []int
 	stopSeen     bool
 	outputTokens int
+	textParts    []string
 	logger       *slog.Logger
 }
 
@@ -284,6 +286,11 @@ func newAnthropicAccumulator(handler ports.StreamHandler, logger *slog.Logger) *
 		pending: make(map[int]*pendingCall),
 		logger:  logger,
 	}
+}
+
+func (a *anthropicAccumulator) withTools(tools []domain.Tool) *anthropicAccumulator {
+	a.tools = tools
+	return a
 }
 
 func (a *anthropicAccumulator) process(event anthropicSSEEvent) error {
@@ -304,6 +311,7 @@ func (a *anthropicAccumulator) process(event anthropicSSEEvent) error {
 		}
 		switch event.Delta.Type {
 		case "text_delta":
+			a.textParts = append(a.textParts, event.Delta.Text)
 			return a.handler(ports.TextDeltaEvent{Text: event.Delta.Text})
 		case "input_json_delta":
 			if pending, ok := a.pending[event.Index]; ok {
@@ -328,17 +336,35 @@ func (a *anthropicAccumulator) process(event anthropicSSEEvent) error {
 }
 
 func (a *anthropicAccumulator) finish() error {
+	emitted := 0
 	for _, index := range a.order {
 		pending := a.pending[index]
 		if pending == nil || pending.call.Name == "" {
 			a.logger.Warn("anthropic.tool_call_incompleto")
 			continue
 		}
-		if err := parseArguments(pending.arguments, pending.call.Arguments); err != nil {
+		if len(a.tools) > 0 {
+			pending.call.Name = matchToolFuzzy(pending.call.Name, a.tools)
+		}
+		if err := parseArgumentsTolerant(pending.arguments, pending.call.Arguments); err != nil {
 			a.logger.Warn("anthropic.tool_call_args_inválidos", "err", err)
+			// Emitir igualmente: el runner lo reporta y el modelo autocorrige.
 		}
 		if err := a.handler(ports.ToolCallEvent{Call: *pending.call}); err != nil {
 			return err
+		}
+		emitted++
+	}
+	if emitted == 0 && len(a.tools) > 0 {
+		joined := strings.Join(a.textParts, "")
+		if recovered := RecoverToolCallsFromText(joined, a.tools); len(recovered) > 0 {
+			a.logger.Info("anthropic.tool_call_recovered_from_text", "count", len(recovered))
+			for _, rc := range recovered {
+				if err := a.handler(ports.ToolCallEvent{Call: rc}); err != nil {
+					return err
+				}
+				emitted++
+			}
 		}
 	}
 	reason := domain.FinishReasonStop

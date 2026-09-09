@@ -4,6 +4,21 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-1.1.0/) y
 el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 
+## [0.2.0] - 2026-09-09
+
+### Añadido
+
+- **Sandbox nativo a nivel de SO (Oleada 1, sin Docker ni descargas)**: `ports.SandboxBackend` + `domain.SandboxPolicy` (modos `read-only`/`workspace-write`/`danger-full-access`, red binaria on/off). Backend Seatbelt en macOS (`/usr/bin/sandbox-exec`, perfil SBPL generado en memoria, deny-by-default, `.git` siempre read-only) y bwrap en Linux; degradación con warning donde no hay backend (Windows experimental). Verificado empíricamente: escritura en workspace pasa, `.git`/HOME denegados, red OFF, `go build` funciona con `GOCACHE`/`GOTMPDIR` redirigidos al workspace. Config `execution.sandbox/mode/network/extra_writable`, política inyectada al system prompt (patrón Codex) y `forgen debug sandbox --profile -- <cmd>` para probar políticas (`internal/adapters/out/sandbox/`, `internal/core/domain/sandbox.go`, `internal/core/ports/sandbox.go`, `internal/adapters/in/cli/debug.go`).
+- **Gate plan→build con enforcement**: `Session.PlanStatus` (`pending` al escribir `.forgen/plans/*`, `approved` vía `exit_plan_mode`); con plan pendiente, build no ejecuta `write/edit/apply_patch/bash/lsp_rename` y el modelo recibe `PLAN GATE` accionable. Nuevo `/approve` en TUI + estado en `/context` (`internal/application/agent/runner.go`, `internal/core/domain/session.go`, `internal/adapters/in/tui/model.go`).
+- **Reglas de permiso robustas**: comparador `valuesEqual` con coerción numérica int/float64, strings recortados y recursión (reemplaza el frágil `fmt "%v"`) (`internal/application/permission/service.go`).
+- **Compactación automática anti-alucinaciones**: medición real `TotalTokens` (system+tools+mensajes, antes solo mensajes), niveles 70% aviso / 85% prune+summary / 95% forzado, guard pre-LLM intra-loop, decaimiento del contador anti-thrashing, validación del summary con 1 retry, warn de coste relativo al modelo (`internal/application/session/compaction.go`, `internal/application/agent/runner.go`).
+- **Rescate tool-calling universal**: parser tolerante + fuzzy match + fallback desde texto cableados en ambos adapters, retry para todos los providers (antes solo locales), continuación automática en `finish_reason==length`, `maxTokens` 2048/4096/8192 por tier, tier heavy para 30B/sonnet, memoria con budget 2k, escrituras secuenciales, doom-loop semántico (`internal/adapters/out/llm/`, `internal/core/domain/tier.go`).
+
+### Cambiado
+
+- `execution.sandbox` default `native` (antes `""` local sin jaula, `docker` opt-in roto que ignoraba workdir/env); `docker` queda como backend legacy.
+- Cola de compaction: tail 20→30 mensajes, summary 2048→3072 tokens, formato estructurado en 7 secciones.
+
 ## [0.1.26] - 2026-09-01
 
 ### Añadido
