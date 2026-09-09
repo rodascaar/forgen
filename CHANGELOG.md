@@ -4,6 +4,13 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-1.1.0/) y
 el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 
+## [0.3.1] - 2026-09-09
+
+### Corregido
+
+- **CI lint en verde**: 7 hallazgos `errorlint` (`%v`→`%w` al formatear errores en `clipboard.go`/`copyblocks.go`) y 3 `modernize` (`strings.CutPrefix`, `slices.Backward`) del feature de copia granular.
+- **Aviso Node 20 en CI**: `golangci-lint-action` v7→v9 (runtime `node24`, se mantiene binario `golangci-lint v2.12.2`).
+
 ## [0.3.0] - 2026-09-09
 
 ### Añadido

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -27,10 +28,10 @@ func extractCodeBlocks(text string) []codeBlock {
 	var current []string
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "```") {
+		if after, ok := strings.CutPrefix(trimmed, "```"); ok {
 			if !inBlock {
 				inBlock = true
-				lang = strings.TrimSpace(strings.TrimPrefix(trimmed, "```"))
+				lang = strings.TrimSpace(after)
 				current = nil
 			} else {
 				inBlock = false
@@ -54,8 +55,8 @@ func stripPromptChars(code string) string {
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		for _, prefix := range []string{"$", "❯", ">"} {
-			if strings.HasPrefix(trimmed, prefix) {
-				trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, prefix))
+			if rest, ok := strings.CutPrefix(trimmed, prefix); ok {
+				trimmed = strings.TrimSpace(rest)
 				break
 			}
 		}
@@ -80,9 +81,9 @@ func (m *Model) assistantHistory() []string {
 	if m.assistantBuffer != "" {
 		out = append(out, m.assistantBuffer)
 	}
-	for i := len(m.transcript) - 1; i >= 0; i-- {
-		if m.transcript[i].kind == "assistant" {
-			out = append(out, m.transcript[i].text)
+	for _, line := range slices.Backward(m.transcript) {
+		if line.kind == "assistant" {
+			out = append(out, line.text)
 		}
 	}
 	return out
@@ -96,7 +97,7 @@ func copyTextWithFallback(text string) (method string, fallbackFile string, err 
 	} else {
 		copyErr := err
 		if path, werr := writeCopyFallback(text); werr == nil {
-			return "", path, fmt.Errorf("%v (guardado en %s)", copyErr, path)
+			return "", path, fmt.Errorf("%w (guardado en %s)", copyErr, path)
 		}
 		return "", "", copyErr
 	}

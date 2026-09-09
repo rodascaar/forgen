@@ -80,7 +80,7 @@ func copyWithEnv(
 			} else if oscErr := osc52Fn(text); oscErr == nil {
 				return "OSC52", nil
 			} else {
-				return "", fmt.Errorf("tmux: %v; OSC52: %v", err, oscErr)
+				return "", fmt.Errorf("tmux: %w; OSC52: %w", err, oscErr)
 			}
 		}
 		if err := osc52Fn(text); err != nil {
@@ -103,7 +103,7 @@ func copyWithEnv(
 					}
 					return "OSC52", nil
 				} else {
-					return "", fmt.Errorf("nativo: %v; WSL: %v; terminal: %v", nativeErr, wslErr, termErr)
+					return "", fmt.Errorf("nativo: %w; WSL: %w; terminal: %w", nativeErr, wslErr, termErr)
 				}
 			}
 		}
@@ -113,7 +113,7 @@ func copyWithEnv(
 			}
 			return "OSC52", nil
 		} else {
-			return "", fmt.Errorf("nativo: %v; terminal: %v", nativeErr, termErr)
+			return "", fmt.Errorf("nativo: %w; terminal: %w", nativeErr, termErr)
 		}
 	}
 }
@@ -125,7 +125,7 @@ func terminalCopy(text string, inTmux bool, tmuxFn, osc52Fn func(string) error) 
 		} else if oscErr := osc52Fn(text); oscErr == nil {
 			return nil
 		} else {
-			return fmt.Errorf("tmux: %v; OSC52: %v", err, oscErr)
+			return fmt.Errorf("tmux: %w; OSC52: %w", err, oscErr)
 		}
 	}
 	return osc52Fn(text)
@@ -181,7 +181,7 @@ func nativeCopy(text string) error {
 	// Fallback genérico (atotto usa pbcopy/xclip internamente según plataforma).
 	if err := atottoCopy(text); err != nil {
 		if lastNativeErr != "" {
-			return fmt.Errorf("%s; clipboard: %v", lastNativeErr, err)
+			return fmt.Errorf("%s; clipboard: %w", lastNativeErr, err)
 		}
 		return err
 	}
@@ -227,7 +227,7 @@ func tmuxCopy(text string) error {
 			return fmt.Errorf("tmux set-clipboard está en off (actívalo con `set -g set-clipboard on`)")
 		}
 	} else {
-		return fmt.Errorf("tmux no disponible: %v", err)
+		return fmt.Errorf("tmux no disponible: %w", err)
 	}
 	cmd := exec.Command("tmux", "load-buffer", "-w", "-")
 	cmd.Stdin = strings.NewReader(text)
