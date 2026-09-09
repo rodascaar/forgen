@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -534,7 +533,7 @@ func (r *Runner) callLLM(ctx context.Context, sessionID string, model domain.Mod
 			topP := 0.95
 			topK := 40
 			// Filtrar TopK solo para proveedores que lo soportan
-			var retryTopK *int = &topK
+			retryTopK := &topK
 			if model.Provider == "openai" || model.Provider == "anthropic" {
 				retryTopK = nil
 			}
@@ -910,10 +909,15 @@ func (r *Runner) updatePlanStatus(sess *domain.Session, agent domain.Agent, call
 }
 
 // consecutiveToolErrors cuenta errores al final del batch y actualiza el streak global.
+// Además integra shouldRetryToolError: errores típicos de SLM (is a directory)
+// alimentan el streak aunque el último mensaje no parezca error.
 func consecutiveToolErrors(msgs []domain.Message) int {
 	if len(msgs) == 0 {
 		recordToolErrorOutcome(true, "")
 		return 0
+	}
+	if shouldRetryToolError(msgs) {
+		return recordToolErrorOutcome(false, "slm-tool-arg")
 	}
 	// Si el último mensaje es OK, se resetea el streak.
 	last := msgs[len(msgs)-1].Text()
@@ -1027,9 +1031,12 @@ var readOnlyToolAllowlist = map[string]bool{
 }
 
 // isPlanArtifactPath permite write en plan mode solo a artefactos de plan (claude-code strict).
+// Normaliza `\`→`/` ANTES de Clean: en Windows Clean devuelve `\` y ToSlash
+// solo convierte en Windows, así que sin esto el gate fallaba en CI windows
+// (y el modo plan denegaba hasta el propio plan en esa plataforma).
 func isPlanArtifactPath(p string) bool {
-	clean := filepath.Clean(p)
-	return clean == ".forgen/plans/plan.md" || strings.HasPrefix(clean, ".forgen/plans/") || strings.HasPrefix(clean, ".forgen/plans\\")
+	clean := filepath.ToSlash(filepath.Clean(strings.ReplaceAll(p, "\\", "/")))
+	return clean == ".forgen/plans/plan.md" || strings.HasPrefix(clean, ".forgen/plans/")
 }
 
 // visibleTools filtra las herramientas según el agente.
@@ -1060,26 +1067,6 @@ func (r *Runner) buildMessages(systemPrompt string, session domain.Session) []do
 
 func (r *Runner) compactedVisible(s domain.Session) []domain.Message {
 	return session.VisibleMessages(s)
-}
-
-func (r *Runner) projectMessage(m domain.Message) domain.Message {
-	if m.CompactedAt != nil && m.Role == domain.RoleTool {
-		return domain.Message{
-			Role:       m.Role,
-			ToolCallID: m.ToolCallID,
-			ToolName:   m.ToolName,
-			Content:    []domain.ContentPart{{Type: "text", Text: session.SummaryPlaceholder}},
-			CreatedAt:  m.CreatedAt,
-		}
-	}
-	return m
-}
-
-// maybeCompact aplica 2-step compaction: prune (cero LLM) → LLM summary si aún overflow.
-// focus permite /compact con instrucciones (Claude Compact Instructions).
-// Wrapper legacy sin contexto real (system+tools no medidos); preferir maybeCompactWithContext.
-func (r *Runner) maybeCompact(ctx context.Context, sess *domain.Session, focus string) error {
-	return r.maybeCompactWithContext(ctx, sess, focus, "", nil)
 }
 
 // maybeCompactWithContext es la compactación automática con medición real:
@@ -1223,49 +1210,9 @@ func (r *Runner) maybeCompactForced(ctx context.Context, sess *domain.Session, f
 	return nil
 }
 
-// Helpers locales — ahora alias deprecados hacia session (centralizado, evita drift).
-// Se mantienen por compatibilidad 1 tag; preferir session.IsOverflow etc.
-func isOverflowLocal(s domain.Session, model domain.Model, md map[string]domain.ModelMetadata, threshold float64) bool {
-	return session.IsOverflow(s, model, md, threshold)
-}
-
+// Helpers locales hacia session (centralizado, evita drift).
 func needsPruneLocal(s domain.Session) (bool, int) {
 	return session.NeedsPrune(s)
-}
-
-func protectedLocal(s domain.Session) map[int]bool {
-	// No exportado en session; delega vía Prune path pero expone para compat.
-	// Llama a session.Prune para obtener protected vía NeedsPrune internamente no expuesto;
-	// para parity, replica lógica central vía session helper indirecto:
-	// Usamos session.NeedsPrune como proxy y mantenemos original para no exponer internals.
-	// Mantener implementación anterior como fallback deprecado (no drift crítico tras alias IsOverflow).
-	protected := make(map[int]bool)
-	acc := 0
-	for i, v := range slices.Backward(s.Messages) {
-		m := v
-		if m.Role == domain.RoleTool {
-			if acc < 40000 {
-				protected[i] = true
-				acc += session.MessageTokens(m)
-			}
-		}
-	}
-	userTurns := 0
-	for i := len(s.Messages) - 1; i >= 0 && userTurns < 2; i-- {
-		if s.Messages[i].Role == domain.RoleUser {
-			protected[i] = true
-			userTurns++
-			if i+1 < len(s.Messages) {
-				protected[i+1] = true
-			}
-		}
-	}
-	for i, m := range s.Messages {
-		if m.ToolName == "read_skill" {
-			protected[i] = true
-		}
-	}
-	return protected
 }
 
 func pruneLocal(s domain.Session) (domain.Session, int) {

@@ -152,11 +152,7 @@ func (r *Registry) Execute(ctx context.Context, call domain.ToolCall) domain.Too
 	limit := r.outputLimit
 	var hint string
 	if !ok {
-		names := make([]string, 0, len(r.tools))
-		for _, t := range r.tools {
-			names = append(names, t.Name)
-		}
-		hint = ". Tools disponibles: " + strings.Join(names, ", ")
+		hint = availableToolsHintLocked(r.tools)
 	}
 	r.mu.RUnlock()
 	if !ok {
@@ -185,11 +181,20 @@ func shellHint(name string) string {
 }
 
 // availableToolsHint lista las tools registradas para orientar al modelo.
+// API pública para futuros callers (CLI doctor, TUI); Execute usa la variante
+// con lock ya tomado.
+//
+//nolint:unused // sin callers aún, parte del contrato público del registry
 func availableToolsHint(r *Registry) string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	names := make([]string, 0, len(r.tools))
-	for _, t := range r.tools {
+	return availableToolsHintLocked(r.tools)
+}
+
+// availableToolsHintLocked es la versión sin lock (llamar con RLock tomado).
+func availableToolsHintLocked(tools []ToolDef) string {
+	names := make([]string, 0, len(tools))
+	for _, t := range tools {
 		names = append(names, t.Name)
 	}
 	return ". Tools disponibles: " + strings.Join(names, ", ")
@@ -436,10 +441,8 @@ func (r *Registry) bashTool() ToolDef {
 			if strings.TrimSpace(args.Command) == "" {
 				return domain.ToolResult{OK: false, Error: fmt.Errorf("command vacío — usa la tool `bash` con un comando shell válido (ej: \"ls -la\", \"go test ./...\")")}
 			}
-			// Si el modelo intentó un comando directo como herramienta, sugerir bash
-			if hint := shellHint(strings.Fields(args.Command)[0]); hint != "" {
-				// no bloqueamos, solo el hint ya está en Execute para tool desconocida
-			}
+			// Si el modelo intentó un comando directo como herramienta, el hint
+			// ya viaja en el error de Execute para tool desconocida (shellHint).
 			workdir := args.Workdir
 			if workdir == "" {
 				workdir = "."

@@ -908,7 +908,7 @@ func (a *App) newSubAgentRunner(ctx context.Context, provider ports.LLMProvider,
 	systemPrompt := func(ctx context.Context) (string, error) {
 		blocks, err := agent.LoadProjectContext(ctx, workspace, a.FileSystem)
 		if err != nil {
-			return agentDef.SystemPrompt, nil
+			return agentDef.SystemPrompt, nil //nolint:nilerr // fallback intencional: sin contexto de proyecto se usa el prompt base
 		}
 		toolchain, _ := agent.LoadToolchainContext(ctx, workspace, a.Language, a.Toolchain)
 		fermentBlock := a.activeFermentBlock(ctx)

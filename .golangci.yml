@@ -29,8 +29,8 @@ linters:
         - G306
         - G122
         - G101
-    modernize:
-      enable-all: true
+    # modernize corre todas sus comprobaciones por defecto (sin settings:
+    # `enable-all` no existe en el schema v2 y rompía `config verify` en CI).
     gocritic:
       enable-all: true
       disabled-checks:

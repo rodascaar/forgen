@@ -44,7 +44,7 @@ func (c *CLI) Diff(ctx context.Context, workdir string, staged bool) (string, er
 func (c *CLI) IsRepo(ctx context.Context, workdir string) (bool, error) {
 	output, err := c.run(ctx, workdir, "rev-parse", "--is-inside-work-tree")
 	if err != nil {
-		return false, nil // no es repo, no es un error de la aplicación
+		return false, nil //nolint:nilerr // no es repo: condición normal, no error de aplicación
 	}
 	return output == "true", nil
 }

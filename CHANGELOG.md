@@ -4,6 +4,13 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-1.1.0/) y
 el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 
+## [0.2.1] - 2026-09-09
+
+### Corregido
+
+- **CI verde (lint + security + windows)**: `.golangci.yml` inválido (`modernize.enable-all` no existe en schema v2 — el lint nunca llegaba a correr); `go.mod` a `go 1.25.13` (28 vulns stdlib de `go 1.25.0`, `govulncheck` limpio); `isPlanArtifactPath` agnóstico a separadores (el gate plan→build fallaba en Windows y el modo plan denegaba hasta el propio plan ahí).
+- **39 hallazgos golangci-lint (primera corrida real)**: pools a `*[]byte` (SA6002), `maps.Copy`/`slices.Contains`/`slices.Backward` (modernize), `valuesEqual` numérico ya cubierto, `//nolint:nilerr` con motivo en skips intencionales, validación anti-traversal en checkpoints (G703), código muerto eliminado (aliases deprecados, `shouldRetryToolError` cableado al streak de errores).
+
 ## [0.2.0] - 2026-09-09
 
 ### Añadido

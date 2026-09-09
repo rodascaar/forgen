@@ -111,5 +111,5 @@ func (f Ferment) TotalSteps() int {
 
 // AllPhasesComplete indica si todas las fases están completadas.
 func (f Ferment) AllPhasesComplete() bool {
-	return slices.ContainsFunc(f.Phases, func(p Phase) bool { return p.Status != PhaseStatusCompleted }) == false
+	return !slices.ContainsFunc(f.Phases, func(p Phase) bool { return p.Status != PhaseStatusCompleted })
 }

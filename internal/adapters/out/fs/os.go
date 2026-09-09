@@ -27,10 +27,12 @@ var ignoredDirectories = map[string]bool{
 // maxSearchMatches limita las coincidencias devueltas por búsqueda.
 const maxSearchMatches = 200
 
-// bufferPool reutiliza buffers de 64 KiB para escaneo de archivos.
+// bufferPool reutiliza buffers de 64 KiB para escaneo de archivos (punteros
+// para evitar copias del header en Put, SA6002).
 var bufferPool = sync.Pool{
 	New: func() any {
-		return make([]byte, 64*1024)
+		buf := make([]byte, 64*1024)
+		return &buf
 	},
 }
 
@@ -181,7 +183,7 @@ func (o *OSFileSystem) Search(ctx context.Context, root, query, include string) 
 
 	walkErr := filepath.WalkDir(searchRoot, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			return nil // ignorar errores de archivos no legibles
+			return nil //nolint:nilerr // skip intencional: archivos no legibles no abortan la búsqueda
 		}
 		// Check context cancellation
 		select {
@@ -208,7 +210,7 @@ func (o *OSFileSystem) Search(ctx context.Context, root, query, include string) 
 		if include != "" {
 			rel, relErr := filepath.Rel(searchRoot, path)
 			if relErr != nil {
-				return nil
+				return nil //nolint:nilerr // skip intencional: sin rel no se puede matchear include
 			}
 			// doublestar usa "/" como separador; en Windows filepath.Rel
 			// devuelve "\" (ej. src\main.go). Normalizar para que el patrón
@@ -225,7 +227,7 @@ func (o *OSFileSystem) Search(ctx context.Context, root, query, include string) 
 			// ya está normalizado a "/", Match funciona en todas las plataformas.
 			matched, matchErr := doublestar.Match(includePattern, rel)
 			if matchErr != nil || !matched {
-				return nil
+				return nil //nolint:nilerr // skip intencional: patrón inválido o sin match no es error
 			}
 		}
 		if len(matches) >= maxSearchMatches {
@@ -238,17 +240,17 @@ func (o *OSFileSystem) Search(ctx context.Context, root, query, include string) 
 		// Streaming line-by-line with pooled buffer to avoid loading entire file
 		file, err := os.Open(path)
 		if err != nil {
-			return nil
+			return nil //nolint:nilerr // skip intencional: archivo ilegible entre WalkDir y Open (TOCTOU)
 		}
 		// Get a pooled buffer (64 KiB) for the scanner
-		buf := bufferPool.Get().([]byte)
+		buf := bufferPool.Get().(*[]byte)
 		fileScanner := bufio.NewScanner(file)
-		fileScanner.Buffer(buf, 64*1024)
+		fileScanner.Buffer(*buf, 64*1024)
 		index := 0
 		for fileScanner.Scan() {
 			select {
 			case <-ctx.Done():
-				file.Close()
+				_ = file.Close()
 				bufferPool.Put(buf)
 				return ctx.Err()
 			default:
@@ -266,7 +268,7 @@ func (o *OSFileSystem) Search(ctx context.Context, root, query, include string) 
 			}
 			index++
 		}
-		file.Close()
+		_ = file.Close()
 		bufferPool.Put(buf)
 		return nil
 	})

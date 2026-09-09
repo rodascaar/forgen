@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -52,6 +53,28 @@ func isGitRepo(workspace string) bool {
 	return false
 }
 
+// validCheckpointRel verifica que un path relativo de git no escape del workspace
+// (a/../../x se limpia a ../x) ni sea absoluto. Usado antes de WriteFile (G703).
+func validCheckpointRel(workspace, rel string) bool {
+	if rel == "" || filepath.IsAbs(rel) {
+		return false
+	}
+	clean := filepath.Clean(rel)
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return false
+	}
+	// Cinturón y tirantes: el join final debe quedar bajo workspace.
+	joined := filepath.Clean(filepath.Join(workspace, clean))
+	wsClean := filepath.Clean(workspace)
+	if joined != wsClean {
+		rel, err := filepath.Rel(wsClean, joined)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return false
+		}
+	}
+	return true
+}
+
 // gitChangedFiles lista archivos modificados + untracked via git (incremental, opencode-style).
 func gitChangedFiles(ctx context.Context, workspace string) []string {
 	var out []string
@@ -70,7 +93,7 @@ func gitChangedFiles(ctx context.Context, workspace string) []string {
 	if b, err := cmd2.Output(); err == nil {
 		for line := range strings.SplitSeq(strings.TrimSpace(string(b)), "\n") {
 			line = strings.TrimSpace(line)
-			if line != "" && !contains(out, line) {
+			if line != "" && !slices.Contains(out, line) {
 				out = append(out, line)
 			}
 		}
@@ -80,21 +103,12 @@ func gitChangedFiles(ctx context.Context, workspace string) []string {
 	if b, err := cmd3.Output(); err == nil {
 		for line := range strings.SplitSeq(strings.TrimSpace(string(b)), "\n") {
 			line = strings.TrimSpace(line)
-			if line != "" && !contains(out, line) {
+			if line != "" && !slices.Contains(out, line) {
 				out = append(out, line)
 			}
 		}
 	}
 	return out
-}
-
-func contains(s []string, v string) bool {
-	for _, x := range s {
-		if x == v {
-			return true
-		}
-	}
-	return false
 }
 
 // Create toma un snapshot del workspace bajo la sesión indicada.
@@ -119,7 +133,7 @@ func (s *CheckpointStore) Create(ctx context.Context, workspace, sessionID strin
 		changed := gitChangedFiles(ctx, workspace)
 		if len(changed) > 0 {
 			for _, rel := range changed {
-				if strings.HasPrefix(rel, "..") {
+				if !validCheckpointRel(workspace, rel) {
 					continue
 				}
 				src := filepath.Join(workspace, rel)
@@ -135,7 +149,7 @@ func (s *CheckpointStore) Create(ctx context.Context, workspace, sessionID strin
 				if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 					continue
 				}
-				if err := os.WriteFile(out, data, 0o644); err != nil {
+				if err := os.WriteFile(out, data, 0o644); err != nil { //nolint:gosec // G703: out validado por validCheckpointRel (contenido en dest)
 					continue
 				}
 				total += int64(len(data))
@@ -272,7 +286,7 @@ func (s *CheckpointStore) List(ctx context.Context, sessionID string, limit int)
 	dir := filepath.Join(s.root, sessionID)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, nil
+		return nil, nil //nolint:nilerr // sin checkpoints aún: lista vacía, no error
 	}
 	out := make([]domain.Checkpoint, 0, len(entries))
 	for _, e := range entries {
@@ -302,7 +316,7 @@ func (s *CheckpointStore) List(ctx context.Context, sessionID string, limit int)
 func (s *CheckpointStore) Prune(ctx context.Context, keep int) error {
 	sessions, err := os.ReadDir(s.root)
 	if err != nil {
-		return nil
+		return nil //nolint:nilerr // sin store aún: nada que podar, no error
 	}
 	for _, se := range sessions {
 		if !se.IsDir() {

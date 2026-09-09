@@ -1573,7 +1573,7 @@ func collapseHeader(text string) string {
 
 // maybeCollapseLastAssistant colapsa la última respuesta del asistente si es larga.
 func (m *Model) maybeCollapseLastAssistant() {
-	for i := len(m.transcript) - 1; i >= 0; i-- {
+	for i := range slices.Backward(m.transcript) {
 		v := &m.transcript[i]
 		if v.kind == "assistant" && len(v.text) > collapseThresholdChars {
 			v.collapsed = true
@@ -1584,7 +1584,7 @@ func (m *Model) maybeCollapseLastAssistant() {
 
 // toggleLastAssistantColapse alterna colapso de la respuesta más reciente (Ctrl+O).
 func (m *Model) toggleLastAssistantColapse() {
-	for i := len(m.transcript) - 1; i >= 0; i-- {
+	for i := range slices.Backward(m.transcript) {
 		v := &m.transcript[i]
 		if v.kind == "assistant" {
 			v.collapsed = !v.collapsed

@@ -48,7 +48,7 @@ func boolProp(description string) map[string]any {
 // Es inocuo para modelos grandes: solo actúa si el alias existe y el canónico no.
 func normalizeArgs(raw map[string]any) map[string]any {
 	if raw == nil {
-		return raw
+		return nil
 	}
 	aliases := map[string]string{
 		"file_path":    "path",

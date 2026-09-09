@@ -26,7 +26,7 @@ func (d *Detector) Detect(_ context.Context, dir string) (string, error) {
 
 	err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			return nil
+			return nil //nolint:nilerr // skip intencional: entradas ilegibles no abortan la detección
 		}
 		if entry.IsDir() {
 			if path != dir && enry.IsVendor(path) {

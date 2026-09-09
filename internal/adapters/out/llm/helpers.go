@@ -3,6 +3,7 @@ package llm
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"regexp"
 	"strings"
 
@@ -30,27 +31,21 @@ func parseArgumentsTolerant(raw string, target map[string]any) error {
 	var out map[string]any
 	// 1) Intento nativo
 	if err := json.Unmarshal([]byte(raw), &out); err == nil {
-		for k, v := range out {
-			target[k] = v
-		}
+		maps.Copy(target, out)
 		return nil
 	}
 	// 2) Reparaciones comunes para modelos pequeños
 	fixed := repairJSON(raw)
 	out = nil
 	if err := json.Unmarshal([]byte(fixed), &out); err == nil {
-		for k, v := range out {
-			target[k] = v
-		}
+		maps.Copy(target, out)
 		return nil
 	}
 	// 3) Fallback: intentar extraer primer objeto JSON válido
 	if obj := extractFirstJSON(raw); obj != "" {
 		out = nil
 		if err := json.Unmarshal([]byte(obj), &out); err == nil {
-			for k, v := range out {
-				target[k] = v
-			}
+			maps.Copy(target, out)
 			return nil
 		}
 	}
@@ -111,9 +106,10 @@ func extractFirstJSON(s string) string {
 			continue
 		}
 		if !inString {
-			if c == '{' || c == '[' {
+			switch c {
+			case '{', '[':
 				depth++
-			} else if c == '}' || c == ']' {
+			case '}', ']':
 				depth--
 				if depth == 0 {
 					return s[start : i+1]
@@ -140,7 +136,7 @@ func extractNameArgs(obj string) (string, string) {
 var toolCallPattern = regexp.MustCompile(`(?s)\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"arguments"\s*:\s*(\{.*?\})\s*\}`)
 
 // xmlToolPattern regex para detectar tool calls estilo XML: <function=name>{args}
-var xmlToolPattern = regexp.MustCompile(`(?s)<function=(\w+)>\s*(\{.*?\})\s*<\/function>`)
+var xmlToolPattern = regexp.MustCompile(`(?s)<function=(\w+)>\s*(\{.*?\})\s*</function>`)
 
 // extractToolCallsFromText busca tool calls en texto libre (modelos que "hablan" en lugar de emitir tool_calls).
 // Soporta: JSON code blocks, JSON objects sueltos, XML-style <function=name>{args}
@@ -220,10 +216,10 @@ func levenshtein(a, b string) int {
 	if a == b {
 		return 0
 	}
-	if len(a) == 0 {
+	if a == "" {
 		return len(b)
 	}
-	if len(b) == 0 {
+	if b == "" {
 		return len(a)
 	}
 	prev := make([]int, len(b)+1)

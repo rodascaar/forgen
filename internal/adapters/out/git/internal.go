@@ -73,7 +73,7 @@ func (s *internalStore) snapshot(ctx context.Context, workdir string) (internalM
 	manifest := internalManifest{Workspace: workdir, Files: map[string]fileInfo{}}
 	_ = filepath.WalkDir(workdir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil
+			return nil //nolint:nilerr // snapshot idempotente: entradas ilegibles se omiten
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -86,11 +86,11 @@ func (s *internalStore) snapshot(ctx context.Context, workdir string) (internalM
 		}
 		rel, rerr := filepath.Rel(workdir, path)
 		if rerr != nil || strings.HasPrefix(rel, "..") {
-			return nil
+			return nil //nolint:nilerr // fuera del workspace: se omite, no es error
 		}
 		info, ierr := d.Info()
 		if ierr != nil {
-			return nil
+			return nil //nolint:nilerr // entrada volátil (TOCTOU): se omite
 		}
 		manifest.Files[filepath.ToSlash(rel)] = fileInfo{
 			Size:  info.Size(),

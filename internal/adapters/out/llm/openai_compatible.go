@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/rodascaar/forgen/internal/core/domain"
 	"github.com/rodascaar/forgen/internal/core/ports"
@@ -342,11 +343,11 @@ func (a *openAIToolAccumulator) finish() error {
 	// Fallback: el modelo "habló" el tool call en texto en vez de emitirlo.
 	// Recupera desde el texto acumulado para no perder el turno.
 	if emitted == 0 && len(a.tools) > 0 {
-		joined := ""
+		var sb strings.Builder
 		for _, p := range a.textParts {
-			joined += p
+			sb.WriteString(p)
 		}
-		if recovered := RecoverToolCallsFromText(joined, a.tools); len(recovered) > 0 {
+		if recovered := RecoverToolCallsFromText(sb.String(), a.tools); len(recovered) > 0 {
 			a.logger.Info("llm.tool_call_recovered_from_text", "model", a.model.Key(), "count", len(recovered))
 			for _, rc := range recovered {
 				if err := a.handler(ports.ToolCallEvent{Call: rc}); err != nil {

@@ -26,10 +26,12 @@ const baseBackoff = 500 * time.Millisecond
 // Evita cortar streaming de reasoning high (8192 tokens) a 90s.
 const clientTimeout = 0
 
-// sseBufferPool reutiliza buffers de 4 MiB para escaneo SSE.
+// sseBufferPool reutiliza buffers de 4 MiB para escaneo SSE (punteros para
+// evitar copias del header en Put, SA6002).
 var sseBufferPool = sync.Pool{
 	New: func() any {
-		return make([]byte, 4*1024*1024)
+		buf := make([]byte, 4*1024*1024)
+		return &buf
 	},
 }
 
@@ -154,11 +156,11 @@ func waitForRetry(ctx context.Context, delay time.Duration, lastErr error) bool 
 // StreamSSE lee un body SSE línea a línea y llama a onLine por cada data.
 // Devuelve [DONE] como error centinel para cortar limpiamente.
 func (c *Client) StreamSSE(body io.Reader, onData func(data string) error) error {
-	buf := sseBufferPool.Get().([]byte)
+	buf := sseBufferPool.Get().(*[]byte)
 	defer sseBufferPool.Put(buf)
 
 	scanner := bufio.NewScanner(body)
-	scanner.Buffer(buf, cap(buf))
+	scanner.Buffer(*buf, cap(*buf))
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data:") {
