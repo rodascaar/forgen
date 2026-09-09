@@ -4,6 +4,12 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-1.1.0/) y
 el proyecto adhiere a [Versionado Semántico](https://semver.org/lang/es/).
 
+## [0.3.0] - 2026-09-09
+
+### Añadido
+
+- **Copia granular sin ratón (paridad codex/opencode/claude)**: backend de portapapeles con orden por entorno — SSH→`tmux`/`OSC52`, local→nativo (`wl-copy` > `xclip` > `xsel` > `pbcopy`, `atotto` como fallback)→WSL `powershell`→`tmux`/`OSC52` a `/dev/tty` (límite 100KB, wrap tmux). `/copy code [N]` y `/copy cmd [N]` copian el bloque ` ``` ` exacto desde el Markdown crudo (quita `$`/`❯`/`>`), `/copy N` la N-ésima respuesta, `/export [archivo]` vuelca el transcript (fallback a `/tmp/forgen-copy-*.md` si no hay clipboard). Atajo `Ctrl+Y` yankea el último bloque sin tocar `Ctrl+O` (colapsar). Feedback con método usado y consejo (instalar `wl-copy`/`xclip` o terminal con OSC52) (`internal/adapters/in/tui/clipboard.go`, `copyblocks.go`, `model.go`, `copy_test.go`).
+
 ## [0.2.2] - 2026-09-09
 
 ### Corregido

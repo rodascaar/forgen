@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -40,8 +39,8 @@ type transcriptLine struct {
 const collapseThresholdChars = 500
 
 // slashHelpText resume los comandos disponibles dentro de la TUI. Fuente única para README.
-const slashHelpText = `Comandos: /init /search /provider /model /sessions /new /resume /todo /plan /task /mcp /orchestration /diff /commit /review /test /lint /fix /pr /compact /context /trace /undo /retry /reasoning /copy /help /quit
-Atajos: Enter envía · Tab build↔plan · Ctrl+P plan · Ctrl+M mcp · Ctrl+H ayuda · PgUp/PgDn rueda desplaza · Ctrl+C cancela · Ctrl+O colapsa`
+const slashHelpText = `Comandos: /init /search /provider /model /sessions /new /resume /todo /plan /task /mcp /orchestration /diff /commit /review /test /lint /fix /pr /compact /context /trace /undo /retry /reasoning /copy /export /help /quit
+Atajos: Enter envía · Tab build↔plan · Ctrl+P plan · Ctrl+M mcp · Ctrl+H ayuda · PgUp/PgDn rueda desplaza · Ctrl+C cancela · Ctrl+O colapsa · Ctrl+Y copia código`
 
 // grsprkLogo es la identidad ASCII de forgen (fuente block de go-figure, solo
 // ASCII: sin caracteres box-drawing que causaban artefactos/desalineación). Se
@@ -755,11 +754,18 @@ func (m Model) handleKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch message.String() {
 	case "ctrl+o", "alt+o":
 		// P3: expandir/colapsar la última respuesta del asistente.
+		// No se toca por decisión del usuario; la copia usa Ctrl+Y.
 		m.quitArmed = false
 		if !m.running {
 			m.toggleLastAssistantColapse()
 		}
 		return m, nil
+
+	case "ctrl+y":
+		// Yank: copia el último bloque de código (o respuesta) sin
+		// interferir con Ctrl+O. Equivalente a /copy code del último bloque.
+		m.quitArmed = false
+		return m.yankLastCode()
 
 	case "ctrl+c", "alt+c":
 		if m.running {
@@ -1065,6 +1071,8 @@ func (m Model) handleSlash(command string) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "/copy":
 		return m.handleCopy(fields)
+	case "/export":
+		return m.handleExport(fields[1:])
 	case "/resume":
 		if len(fields) > 1 {
 			m.sessionID = fields[1]
@@ -1649,7 +1657,8 @@ func (m Model) renderHelp() string {
 		"  /fix        Auto-fix lint/test",
 		"  /pr         Crear PR (gh pr create)",
 		"  /reasoning Nivel de razonamiento: off|low|medium|high",
-		"  /copy      Copia la última respuesta al portapapeles (/copy all)",
+		"  /copy      Copia respuesta (/copy N · /copy code [N] · /copy cmd [N] · /copy all)",
+		"  /export    Guarda el transcript en un archivo (/tmp si no das ruta)",
 		"  /context   Muestra tokens/estado del contexto de la sesión",
 		"  /trace     Diagnóstico: modelo resuelto, tamaño de contexto y tools",
 		"  /undo      Revierte la última iteración (checkpoint interno)",
@@ -1666,6 +1675,7 @@ func (m Model) renderHelp() string {
 		"  Rueda ratón  Desplaza la conversación (trackpad también)",
 		"  Ctrl+C       Cancela la petición en curso · pulsar 2× para salir",
 		"  Ctrl+O       Expande/colapsa la última respuesta larga del asistente",
+		"  Ctrl+Y       Copia el último bloque de código (yank, sin tocar Ctrl+O)",
 		"  Esc          Cierra overlays / cancela salida",
 		"",
 		"Ver también: /todo (plan), /mcp (servidores), /help (esta ayuda).",
@@ -1769,35 +1779,160 @@ func validReasoningLevel(level string) bool {
 	return false
 }
 
-// handleCopy copia al portapapeles: la última respuesta del asistente (/copy)
-// o todo el transcript (/copy all).
+// handleCopy copia al portapapeles con granularidad:
+// /copy            última respuesta
+// /copy all         todo el transcript
+// /copy N           N-ésima respuesta hacia atrás (1 = última)
+// /copy code [N]    N-ésimo bloque ``` de la última respuesta (defecto: único o último)
+// /copy cmd [N]     alias orientado a comandos (quita $, ❯, >)
+// /export [archivo] vuelca el transcript a un archivo (fallback cuando no hay clipboard).
 func (m *Model) handleCopy(fields []string) (tea.Model, tea.Cmd) {
-	all := len(fields) > 1 && fields[1] == "all"
-	var text string
-	if all {
+	if len(fields) == 1 {
+		return m.copyAssistantText(m.lastAssistantText(), "Última respuesta")
+	}
+	switch fields[1] {
+	case "all":
 		var builder strings.Builder
 		for _, line := range m.transcript {
 			builder.WriteString(line.text)
 			builder.WriteString("\n")
 		}
-		text = strings.TrimRight(builder.String(), "\n")
-	} else {
-		text = m.lastAssistantText()
+		return m.copyAssistantText(strings.TrimRight(builder.String(), "\n"), "Transcript")
+	case "code", "cmd":
+		return m.handleCopyCode(fields[1], fields[2:])
+	default:
+		// /copy N — N-ésima respuesta hacia atrás.
+		history := m.assistantHistory()
+		idx, err := parseCopyIndex(fields[1], len(history))
+		if err != nil || len(history) == 0 {
+			if len(history) == 0 {
+				m.append("notice", "Nada que copiar todavía.")
+				return m, nil
+			}
+			m.append("notice", fmt.Sprintf("Uso: /copy 1..%d · /copy code [N] · /copy all", len(history)))
+			return m, nil
+		}
+		_ = err
+		return m.copyAssistantText(history[idx], fmt.Sprintf("Respuesta %d", idx+1))
 	}
+}
+
+// handleCopyCode copia un bloque ``` exacto desde el Markdown crudo.
+func (m *Model) handleCopyCode(kind string, args []string) (tea.Model, tea.Cmd) {
+	text := m.lastAssistantText()
 	if text == "" {
 		m.append("notice", "Nada que copiar todavía.")
 		return m, nil
 	}
-	if err := clipboard.WriteAll(text); err != nil {
-		m.append("error", fmt.Sprintf("Error copiando al portapapeles: %v", err))
+	blocks := extractCodeBlocks(text)
+	if len(blocks) == 0 {
+		m.append("notice", "La última respuesta no tiene bloques de código. Usa /copy para toda la respuesta.")
 		return m, nil
 	}
-	if all {
-		m.append("tool_done", "✓ Transcript copiado al portapapeles.")
+	idx := len(blocks) - 1 // por defecto: último bloque
+	if len(args) > 0 {
+		n, err := parseCopyIndex(args[0], len(blocks))
+		if err != nil {
+			var list strings.Builder
+			for i, b := range blocks {
+				lang := b.lang
+				if lang == "" {
+					lang = "txt"
+				}
+				fmt.Fprintf(&list, "\n  %d. [%s] %s", i+1, lang, shortPreview(b.code, 60))
+			}
+			m.append("notice", fmt.Sprintf("Hay %d bloques:%s\nUsa /copy %s <n>", len(blocks), list.String(), kind))
+			return m, nil
+		}
+		idx = n
+	}
+	code := strings.TrimRight(blocks[idx].code, "\n")
+	label := "Bloque de código"
+	if kind == "cmd" {
+		code = stripPromptChars(code)
+		label = "Comando"
+	}
+	if code == "" {
+		m.append("notice", "El bloque está vacío.")
+		return m, nil
+	}
+	lang := blocks[idx].lang
+	if lang == "" {
+		lang = "txt"
+	}
+	return m.copyAssistantText(code, fmt.Sprintf("%s %d/%d [%s]", label, idx+1, len(blocks), lang))
+}
+
+// copyAssistantText centraliza el copiado con fallback a archivo y feedback del backend.
+func (m *Model) copyAssistantText(text, label string) (tea.Model, tea.Cmd) {
+	if strings.TrimSpace(text) == "" {
+		m.append("notice", "Nada que copiar todavía.")
+		return m, nil
+	}
+	if method, fallback, err := copyTextWithFallback(text); err == nil {
+		m.append("tool_done", fmt.Sprintf("✓ %s copiado (%d chars vía %s).", label, len(text), method))
+	} else if fallback != "" {
+		m.append("error", fmt.Sprintf("Portapapeles no disponible: %v. Contenido en %s. Consejo: instala wl-copy/xclip (Linux) o usa un terminal con OSC52 (Ghostty/Kitty/iTerm2/WezTerm).", err, fallback))
 	} else {
-		m.append("tool_done", "✓ Última respuesta copiada al portapapeles.")
+		m.append("error", fmt.Sprintf("Error copiando al portapapeles: %v. Consejo: instala wl-copy/xclip (Linux) o usa un terminal con OSC52.", err))
 	}
 	return m, nil
+}
+
+// handleExport vuelca el transcript a un archivo (escape hatch estilo claude `v`).
+func (m *Model) handleExport(args []string) (tea.Model, tea.Cmd) {
+	var builder strings.Builder
+	for _, line := range m.transcript {
+		builder.WriteString(line.text)
+		builder.WriteString("\n")
+	}
+	text := strings.TrimRight(builder.String(), "\n")
+	if strings.TrimSpace(text) == "" {
+		m.append("notice", "Nada que exportar todavía.")
+		return m, nil
+	}
+	path := ""
+	if len(args) > 0 {
+		path = args[0]
+	} else {
+		var err error
+		path, err = writeCopyFallback(text)
+		if err != nil {
+			m.append("error", fmt.Sprintf("Error exportando: %v", err))
+			return m, nil
+		}
+		m.append("tool_done", fmt.Sprintf("✓ Transcript exportado a %s (%d chars).", path, len(text)))
+		return m, nil
+	}
+	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+		m.append("error", fmt.Sprintf("Error exportando a %s: %v", path, err))
+		return m, nil
+	}
+	m.append("tool_done", fmt.Sprintf("✓ Transcript exportado a %s (%d chars).", path, len(text)))
+	return m, nil
+}
+
+// yankLastCode implementa Ctrl+Y: copia el último bloque ``` (o la respuesta
+// si no hay bloques). No toca Ctrl+O (colapsar) por decisión del usuario.
+func (m *Model) yankLastCode() (tea.Model, tea.Cmd) {
+	if m.running {
+		return m, nil
+	}
+	text := m.lastAssistantText()
+	if strings.TrimSpace(text) == "" {
+		m.append("notice", "Nada que copiar todavía.")
+		return m, nil
+	}
+	blocks := extractCodeBlocks(text)
+	if len(blocks) == 0 {
+		return m.copyAssistantText(text, "Última respuesta")
+	}
+	code := stripPromptChars(strings.TrimRight(blocks[len(blocks)-1].code, "\n"))
+	lang := blocks[len(blocks)-1].lang
+	if lang == "" {
+		lang = "txt"
+	}
+	return m.copyAssistantText(code, fmt.Sprintf("Bloque %d/%d [%s]", len(blocks), len(blocks), lang))
 }
 
 // lastAssistantText devuelve la última respuesta de texto del asistente.

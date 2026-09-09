@@ -108,13 +108,14 @@ Escribir es siempre seguro: **ninguna letra sola abre menús**. Todo es `/comand
 | `/undo` | Revertir última iteración |
 | `/retry` | Reintentar último prompt |
 | `/reasoning` `/reason` | Nivel reasoning |
-| `/copy` | Copiar al portapapeles |
+| `/copy` | Copiar respuesta (`/copy N` · `/copy code [N]` · `/copy cmd [N]` · `/copy all`) |
+| `/export` | Guardar transcript en archivo |
 | `/help` `/?` | Ayuda |
 | `/quit` `/exit` | Salir |
 
 **Atajos (estándar global):**
 
-`Enter` envía · `Tab` cambia agente `build↔plan` · `Ctrl+H` ayuda · `Ctrl+P` plan · `Ctrl+M` MCP · `PgUp/PgDn` o `Ctrl+U/D` scroll · `Ctrl+C` cancela · `Ctrl+Q` o `Ctrl+C` dos veces para salir ( `Esc` cancela).
+`Enter` envía · `Tab` cambia agente `build↔plan` · `Ctrl+H` ayuda · `Ctrl+P` plan · `Ctrl+M` MCP · `PgUp/PgDn` o `Ctrl+U/D` scroll · `Ctrl+C` cancela · `Ctrl+O` colapsa · `Ctrl+Y` copia último bloque de código · `Ctrl+Q` o `Ctrl+C` dos veces para salir ( `Esc` cancela).
 
 Footer siempre visible: `Ctrl+P plan · Ctrl+M mcp · Ctrl+H ayuda · / comandos · Tab agente`.
 
